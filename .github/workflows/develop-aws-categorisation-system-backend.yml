@@ -3,7 +3,7 @@ name: Build and deploy Categorisation System Backend to AWS ECS (dev)
 on:
   push:
     branches:
-      - develop
+      - dev
 
 concurrency:
   group: dev-aws-categorisation-system-backend
