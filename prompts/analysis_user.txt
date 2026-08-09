@@ -1,0 +1,5 @@
+Apply the following categorization criteria to the attached AIP document.
+
+---
+{template_content}
+---
