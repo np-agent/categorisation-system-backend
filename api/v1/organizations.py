@@ -36,12 +36,12 @@ def _slugify(name: str) -> str:
 # ---------------------------------------------------------------------------
 class InviteUserRequest(BaseModel):
     email: EmailStr
-    role: Literal["admin", "user"]
+    role: Literal["super-admin", "admin", "user"]
     full_name: Optional[str] = None
 
 
 class UpdateRoleRequest(BaseModel):
-    role: Literal["admin", "user"]
+    role: Literal["super-admin", "admin", "user"]
 
 
 class UpdateTemplatesRequest(BaseModel):
