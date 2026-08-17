@@ -16,12 +16,26 @@ class ResendEmailDelivery(EmailDeliveryInterface):  # type: ignore[misc]
 
     async def send_email(self, template_vars: Any, user_context: Dict[str, Any]) -> None:
         from services.email import send_password_reset_email
+        import logging
+
+        logger = logging.getLogger(__name__)
 
         reset_link: Optional[str] = getattr(template_vars, "password_reset_link", None)
-        to_email: str = getattr(template_vars, "email", "")
+        user = getattr(template_vars, "user", None)
+        to_email: str = getattr(user, "email", "") if user is not None else ""
 
-        if reset_link and to_email:
-            send_password_reset_email(to_email=to_email, reset_link=reset_link)
+        if not reset_link or not to_email:
+            logger.warning(
+                "Password reset email skipped — missing link or email "
+                "(link=%s, email=%s)",
+                bool(reset_link),
+                to_email or None,
+            )
+            return
+
+        ok = send_password_reset_email(to_email=to_email, reset_link=reset_link)
+        if not ok:
+            logger.error("Password reset email failed to send to %s", to_email)
 
 
 init(
