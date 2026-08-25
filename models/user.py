@@ -15,6 +15,10 @@ class UserOut(BaseModel):
     organization_id: str
     role: AppRole
     is_active: bool
+    # Set when the user was switched off by their organisation being
+    # deactivated rather than individually. Only these are restored when the
+    # organisation is reactivated.
+    deactivated_by_org: bool
     invite_status: InviteStatus
     created_at: datetime
 
@@ -31,6 +35,7 @@ def serialize_user(doc: dict) -> UserOut:
         organization_id=str(doc["organization_id"]),
         role=doc.get("role", "user"),
         is_active=doc.get("is_active", True),
+        deactivated_by_org=bool(doc.get("deactivated_by_org", False)),
         invite_status=doc.get("invite_status", "accepted"),
         created_at=doc["created_at"],
     )

@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # Bootstrap: first user to sign up gets super-admin. Set to false after setup.
     BOOTSTRAP_SUPER_ADMIN: bool = True
 
+    # The internal SelfBrief organisation. Managed on its own team screen and
+    # kept out of the customer organisation list. Only this org may hold
+    # super-admin users.
+    INTERNAL_ORG_SLUG: str = "selfbrief-aero"
+    INTERNAL_ORG_NAME: str = "SelfBrief Aero"
+
     class Config:
         env_file = ".env"
         case_sensitive = True

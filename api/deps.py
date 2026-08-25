@@ -7,6 +7,28 @@ from supertokens_python.recipe.session.framework.fastapi import verify_session
 from database.session import get_database
 
 
+ORG_INACTIVE_DETAIL = "Your organisation has been deactivated."
+
+
+async def assert_org_active(db, organization_id) -> None:
+    """
+    Deactivating an org revokes access for everyone inside it.
+
+    The deactivation also switches each member's own is_active flag off, so this
+    check is belt and braces: it still blocks the org if those flags ever drift
+    out of sync with the org's state.
+    """
+    if organization_id is None:
+        return
+    org = await db["organizations"].find_one(
+        {"_id": organization_id}, {"is_active": 1}
+    )
+    # Fail closed: a missing org is as disqualifying as an inactive one,
+    # otherwise a bad organization_id would quietly grant access.
+    if org is None or not org.get("is_active", True):
+        raise HTTPException(status_code=403, detail=ORG_INACTIVE_DETAIL)
+
+
 async def get_current_db_user(
     session: SessionContainer = Depends(verify_session()),
 ) -> dict:
@@ -20,6 +42,7 @@ async def get_current_db_user(
         raise HTTPException(status_code=404, detail="User profile not found")
     if not user.get("is_active", True):
         raise HTTPException(status_code=403, detail="Your account has been deactivated.")
+    await assert_org_active(db, user.get("organization_id"))
     return user
 
 

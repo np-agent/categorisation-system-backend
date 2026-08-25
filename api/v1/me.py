@@ -17,6 +17,7 @@ from supertokens_python.asyncio import get_user as st_get_user
 from supertokens_python.recipe.session.framework.fastapi import verify_session
 from supertokens_python.recipe.session import SessionContainer
 
+from api.deps import assert_org_active, get_current_db_user
 from database.session import get_database
 from models.user import UserOut, serialize_user
 from config.settings import settings
@@ -46,6 +47,7 @@ async def get_me(session: SessionContainer = Depends(verify_session())):
         # access can be restored simply by setting is_active back to true.
         if not user.get("is_active", True):
             raise HTTPException(status_code=403, detail="Your account has been deactivated.")
+        await assert_org_active(db, user.get("organization_id"))
         return serialize_user(user)
 
     # First time — create the profile.
@@ -60,7 +62,7 @@ async def get_me(session: SessionContainer = Depends(verify_session())):
     now = datetime.now(timezone.utc)
 
     # Ensure SelfBrief Aero org exists for bootstrap / default assignment
-    default_org = await db["organizations"].find_one({"slug": "selfbrief-aero"})
+    default_org = await db["organizations"].find_one({"slug": settings.INTERNAL_ORG_SLUG})
     org_needs_creator = False
     if not default_org:
         if role != "super-admin":
@@ -69,8 +71,8 @@ async def get_me(session: SessionContainer = Depends(verify_session())):
                 detail="No organisation assigned. Ask a super admin to invite you.",
             )
         insert = await db["organizations"].insert_one({
-            "name": "SelfBrief Aero",
-            "slug": "selfbrief-aero",
+            "name": settings.INTERNAL_ORG_NAME,
+            "slug": settings.INTERNAL_ORG_SLUG,
             "is_active": True,
             "templates": [],
             "created_at": now,
@@ -114,16 +116,18 @@ async def get_me(session: SessionContainer = Depends(verify_session())):
 @router.patch("", response_model=UserOut)
 async def update_me(
     full_name: str,
-    session: SessionContainer = Depends(verify_session()),
+    caller: dict = Depends(get_current_db_user),
 ):
-    """Update the current user's display name."""
-    supertokens_user_id = session.get_user_id()
+    """
+    Update the current user's display name. Depending on get_current_db_user
+    means a deactivated account or organisation cannot edit anything.
+    """
     db = await get_database()
 
     user = await db["users"].find_one_and_update(
-        {"supertokens_user_id": supertokens_user_id},
+        {"_id": caller["_id"]},
         {"$set": {"full_name": full_name}},
-        return_document=True,
+        return_document=ReturnDocument.AFTER,
     )
     if not user:
         raise HTTPException(status_code=404, detail="User profile not found")

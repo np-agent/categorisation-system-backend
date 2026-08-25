@@ -3,10 +3,11 @@ import io
 from datetime import datetime, timezone
 
 import boto3
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pymongo import ReturnDocument
 from pypdf import PdfReader
 
+from api.deps import get_current_db_user
 from config.settings import settings
 from database.session import get_database
 from models.airport import (
@@ -16,7 +17,9 @@ from models.airport import (
     serialize_airport,
 )
 
-router = APIRouter()
+# Gate the whole router: every airport route requires an active user in an
+# active organisation, so deactivation applies here too.
+router = APIRouter(dependencies=[Depends(get_current_db_user)])
 
 
 @router.get("", response_model=list[AirportOut])
