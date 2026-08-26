@@ -15,7 +15,7 @@ TOOL_NAME = "submit_categorisation_result"
 CATEGORISATION_TOOL = {
     "name": TOOL_NAME,
     "description": (
-        "Submit the airfield categorization result. "
+        "Submit the airfield categorisation result. "
         "Always call this tool with the final analysis fields."
     ),
     "input_schema": {
@@ -38,7 +38,7 @@ CATEGORISATION_TOOL = {
             "confidence_level": {
                 "type": "string",
                 "enum": ["HIGH", "MEDIUM", "LOW"],
-                "description": "Confidence in the categorization decision.",
+                "description": "Confidence in the categorisation decision.",
             },
         },
         "required": ["reasoning", "final_category", "confidence_level"],

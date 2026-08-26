@@ -24,7 +24,7 @@ async def assert_org_active(db, organization_id) -> None:
         {"_id": organization_id}, {"is_active": 1}
     )
     # Fail closed: a missing org is as disqualifying as an inactive one,
-    # otherwise a bad organization_id would quietly grant access.
+    # otherwise a missing organisation_id would quietly grant access.
     if org is None or not org.get("is_active", True):
         raise HTTPException(status_code=403, detail=ORG_INACTIVE_DETAIL)
 

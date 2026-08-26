@@ -78,7 +78,7 @@ app.include_router(health_router, prefix="/api/health", tags=["Health"])
 app.include_router(me_router, prefix="/api/v1/me", tags=["Me"])
 app.include_router(airports_router, prefix="/api/v1/airports", tags=["Airports"])
 app.include_router(templates_router, prefix="/api/v1/templates", tags=["Templates"])
-app.include_router(organizations_router, prefix="/api/v1/organizations", tags=["Organizations"])
+app.include_router(organizations_router, prefix="/api/v1/organizations", tags=["Organisations"])
 # British spelling alias used by the frontend
 app.include_router(organizations_router, prefix="/api/v1/organisations", tags=["Organisations"])
 app.include_router(jobs_router, prefix="/api/v1/jobs", tags=["Jobs"])

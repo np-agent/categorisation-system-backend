@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pymongo import ReturnDocument
 
 from api.deps import build_user_map, get_current_db_user
+from config.settings import settings
 from database.session import get_database
 from models.prompt_template import (
     PromptTemplateCreate,
@@ -19,10 +20,18 @@ router = APIRouter()
 
 
 async def _remove_template_from_all_orgs(db, template_oid: ObjectId) -> None:
-    """Pull this template ID from every organization's templates list."""
+    """Pull this template ID from every organisation's templates list."""
     await db["organizations"].update_many(
         {"templates": template_oid},
         {"$pull": {"templates": template_oid}},
+    )
+
+
+async def _assign_template_to_internal_org(db, template_oid: ObjectId) -> None:
+    """SelfBrief always has every active template available for job creation."""
+    await db["organizations"].update_one(
+        {"slug": settings.INTERNAL_ORG_SLUG},
+        {"$addToSet": {"templates": template_oid}},
     )
 
 
@@ -93,6 +102,7 @@ async def create_template(
     }
     result = await db["prompt_templates"].insert_one(doc)
     created = await db["prompt_templates"].find_one({"_id": result.inserted_id})
+    await _assign_template_to_internal_org(db, result.inserted_id)
     user_map = await build_user_map(db, [created.get("created_by_user_id")])
     return serialize_template(created, user_map=user_map)
 
@@ -123,6 +133,8 @@ async def update_template(
 
     if updates.get("is_active") is False:
         await _remove_template_from_all_orgs(db, template_oid)
+    elif updates.get("is_active") is True:
+        await _assign_template_to_internal_org(db, template_oid)
 
     user_map = await build_user_map(db, [doc.get("created_by_user_id")])
     return serialize_template(doc, user_map=user_map)

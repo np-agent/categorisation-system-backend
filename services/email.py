@@ -118,7 +118,7 @@ def send_invite_email(to_email: str, invite_link: str, org_name: str) -> bool:
 
 
 def send_job_created_email(to_email: str, job_title: str) -> bool:
-    """Notify the job creator that their categorization job has been submitted."""
+    """Notify the job creator that their categorisation job has been submitted."""
     if not settings.RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set — skipping job created email to %s", to_email)
         return False
@@ -126,11 +126,11 @@ def send_job_created_email(to_email: str, job_title: str) -> bool:
     try:
         _send(
             to_email=to_email,
-            subject=f"Categorization started: {job_title}",
+            subject=f"Categorisation started: {job_title}",
             body=f"""
-      <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">Categorization started</h1>
+      <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">Categorisation started</h1>
       <p style="font-size: 15px; color: #555; margin: 0 0 8px; line-height: 1.6;">
-        Your job <strong>{job_title}</strong> has been submitted and categorization is now in progress.
+        Your job <strong>{job_title}</strong> has been submitted and categorisation is now in progress.
       </p>
       <p style="font-size: 15px; color: #555; margin: 0; line-height: 1.6;">
         We'll send you another email once it's complete.
@@ -146,7 +146,7 @@ def send_job_created_email(to_email: str, job_title: str) -> bool:
 
 
 def send_job_completed_email(to_email: str, job_title: str) -> bool:
-    """Notify the job creator that their categorization job completed successfully."""
+    """Notify the job creator that their categorisation job completed successfully."""
     if not settings.RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set — skipping job completed email to %s", to_email)
         return False
@@ -154,14 +154,14 @@ def send_job_completed_email(to_email: str, job_title: str) -> bool:
     try:
         _send(
             to_email=to_email,
-            subject=f"Categorization complete: {job_title}",
+            subject=f"Categorisation complete: {job_title}",
             body=f"""
       <div style="display: inline-block; background: #dcfce7; color: #166534; font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 99px; margin-bottom: 16px;">
         Completed
       </div>
-      <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">Categorization complete</h1>
+      <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">Categorisation complete</h1>
       <p style="font-size: 15px; color: #555; margin: 0; line-height: 1.6;">
-        The categorization for your job <strong>{job_title}</strong> has completed successfully. Log in to SelfBrief to view the results.
+        The categorisation for your job <strong>{job_title}</strong> has completed successfully. Log in to SelfBrief to view the results.
       </p>
       <p style="font-size: 12px; color: #999; margin: 40px 0 0;">You're receiving this because you created this job on SelfBrief.</p>
             """,
@@ -174,7 +174,7 @@ def send_job_completed_email(to_email: str, job_title: str) -> bool:
 
 
 def send_job_failed_email(to_email: str, job_title: str) -> bool:
-    """Notify the job creator that their categorization job failed."""
+    """Notify the job creator that their categorisation job failed."""
     if not settings.RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set — skipping job failed email to %s", to_email)
         return False
@@ -182,14 +182,14 @@ def send_job_failed_email(to_email: str, job_title: str) -> bool:
     try:
         _send(
             to_email=to_email,
-            subject=f"Categorization failed: {job_title}",
+            subject=f"Categorisation failed: {job_title}",
             body=f"""
       <div style="display: inline-block; background: #fee2e2; color: #991b1b; font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 99px; margin-bottom: 16px;">
         Failed
       </div>
-      <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">Categorization failed</h1>
+      <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">Categorisation failed</h1>
       <p style="font-size: 15px; color: #555; margin: 0; line-height: 1.6;">
-        The categorization for your job <strong>{job_title}</strong> could not be completed.
+        The categorisation for your job <strong>{job_title}</strong> could not be completed.
       </p>
       <p style="font-size: 12px; color: #999; margin: 40px 0 0;">You're receiving this because you created this job on SelfBrief.</p>
             """,

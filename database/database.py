@@ -41,7 +41,7 @@ class Database:
             IndexModel([("organization_id", ASCENDING)]),
         ])
 
-        # organizations
+        # organisations
         await db["organizations"].create_indexes([
             IndexModel([("slug", ASCENDING)], unique=True),
         ])

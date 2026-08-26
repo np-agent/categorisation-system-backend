@@ -1,4 +1,4 @@
-Apply the following categorization criteria to the attached AIP document.
+Apply the following categorisation criteria to the attached AIP document.
 
 ---
 {template_content}

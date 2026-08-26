@@ -30,25 +30,16 @@ async def list_jobs(
 ):
     """
     Return jobs scoped by the caller's role:
-      - super-admin  : all jobs across all orgs
-      - admin        : all jobs in their org
-      - user         : only their own jobs in their org
+      - super-admin : all jobs across all organisations
+      - admin/user  : every job in their organisation
     Optional filters: status, airport_icao
     """
     db = await get_database()
     role = caller.get("role", "user")
 
     query: dict = {}
-    if role == "super-admin":
-        pass
-    elif role == "admin":
+    if role != "super-admin":
         query["organization_id"] = caller["organization_id"]
-    else:
-        query["organization_id"] = caller["organization_id"]
-        # Prefer Mongo user _id; also match legacy SuperTokens id values
-        query["created_by_user_id"] = {
-            "$in": [caller["_id"], str(caller["_id"]), caller.get("supertokens_user_id")]
-        }
 
     if status:
         query["status"] = status
@@ -70,17 +61,28 @@ async def list_jobs(
     return [serialize_job_summary(d, user_map=user_map, org_map=org_map) for d in docs]
 
 
-@router.get("/{job_id}", response_model=JobOut)
-async def get_job(
-    job_id: str,
-    _caller: dict = Depends(get_current_db_user),
-):
-    db = await get_database()
+def _job_visible_to(doc: dict, caller: dict) -> bool:
+    if caller.get("role") == "super-admin":
+        return True
+    return str(doc.get("organization_id")) == str(caller.get("organization_id"))
+
+
+async def _load_visible_job(db, job_id: str, caller: dict) -> dict:
     if not ObjectId.is_valid(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
     doc = await db["jobs"].find_one({"_id": ObjectId(job_id)})
-    if not doc:
+    if not doc or not _job_visible_to(doc, caller):
         raise HTTPException(status_code=404, detail="Job not found")
+    return doc
+
+
+@router.get("/{job_id}", response_model=JobOut)
+async def get_job(
+    job_id: str,
+    caller: dict = Depends(get_current_db_user),
+):
+    db = await get_database()
+    doc = await _load_visible_job(db, job_id, caller)
     return serialize_job(doc)
 
 
@@ -173,19 +175,14 @@ async def create_job(
 @router.get("/{job_id}/status", response_model=JobOut)
 async def check_job_status(
     job_id: str,
-    _caller: dict = Depends(get_current_db_user),
+    caller: dict = Depends(get_current_db_user),
 ):
     """
     Optional manual poll endpoint. The background poller handles this in normal use.
     Kept for debugging / ops.
     """
     db = await get_database()
-    if not ObjectId.is_valid(job_id):
-        raise HTTPException(status_code=400, detail="Invalid job ID")
-
-    doc = await db["jobs"].find_one({"_id": ObjectId(job_id)})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Job not found")
+    doc = await _load_visible_job(db, job_id, caller)
 
     if doc["status"] not in ("running", "pending"):
         return serialize_job(doc)
@@ -251,11 +248,10 @@ async def trigger_job(
 @router.delete("/{job_id}", status_code=204)
 async def delete_job(
     job_id: str,
-    _caller: dict = Depends(get_current_db_user),
+    caller: dict = Depends(get_current_db_user),
 ):
     db = await get_database()
-    if not ObjectId.is_valid(job_id):
-        raise HTTPException(status_code=400, detail="Invalid job ID")
+    await _load_visible_job(db, job_id, caller)
     result = await db["jobs"].delete_one({"_id": ObjectId(job_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Job not found")

@@ -113,10 +113,10 @@ async def get_internal_organization():
 async def get_organization(org_id: str):
     db = await get_database()
     if not ObjectId.is_valid(org_id):
-        raise HTTPException(status_code=400, detail="Invalid organization ID")
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
     doc = await db["organizations"].find_one({"_id": ObjectId(org_id)})
     if not doc:
-        raise HTTPException(status_code=404, detail="Organization not found")
+        raise HTTPException(status_code=404, detail="Organisation not found")
     return serialize_organization(doc)
 
 
@@ -134,7 +134,7 @@ async def create_organization(
         )
     existing = await db["organizations"].find_one({"slug": slug})
     if existing:
-        raise HTTPException(status_code=400, detail="Organization with this slug already exists")
+        raise HTTPException(status_code=400, detail="Organisation with this slug already exists")
 
     now = datetime.now(timezone.utc)
     doc = {
@@ -154,7 +154,7 @@ async def create_organization(
 async def update_organization(org_id: str, data: OrganizationUpdate):
     db = await get_database()
     if not ObjectId.is_valid(org_id):
-        raise HTTPException(status_code=400, detail="Invalid organization ID")
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
 
     updates: dict = {}
     if data.name is not None:
@@ -178,7 +178,7 @@ async def update_organization(org_id: str, data: OrganizationUpdate):
         return_document=ReturnDocument.AFTER,
     )
     if not doc:
-        raise HTTPException(status_code=404, detail="Organization not found")
+        raise HTTPException(status_code=404, detail="Organisation not found")
     return serialize_organization(doc)
 
 
@@ -210,7 +210,7 @@ async def _cascade_reactivate_members(db, oid: ObjectId) -> None:
 async def _set_org_active(org_id: str, is_active: bool) -> OrganizationOut:
     db = await get_database()
     if not ObjectId.is_valid(org_id):
-        raise HTTPException(status_code=400, detail="Invalid organization ID")
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
 
     oid = ObjectId(org_id)
     if not is_active and await _is_internal_org(db, oid):
@@ -225,7 +225,7 @@ async def _set_org_active(org_id: str, is_active: bool) -> OrganizationOut:
         return_document=ReturnDocument.AFTER,
     )
     if not doc:
-        raise HTTPException(status_code=404, detail="Organization not found")
+        raise HTTPException(status_code=404, detail="Organisation not found")
 
     if is_active:
         await _cascade_reactivate_members(db, oid)
@@ -263,16 +263,34 @@ async def reactivate_organization(org_id: str):
 
 @router.get("/{org_id}/templates/summary")
 async def get_org_templates(org_id: str):
-    """Return the template summaries available to a specific organization."""
+    """Return the template summaries available to a specific organisation."""
     db = await get_database()
     if not ObjectId.is_valid(org_id):
-        raise HTTPException(status_code=400, detail="Invalid organization ID")
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
 
     org = await db["organizations"].find_one({"_id": ObjectId(org_id)})
     if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
+        raise HTTPException(status_code=404, detail="Organisation not found")
 
     template_ids = org.get("templates", [])
+    # SelfBrief is the platform org: it always has every active template, so
+    # team members can create jobs without someone assigning them first.
+    if await _is_internal_org(db, org["_id"]):
+        cursor = db["prompt_templates"].find(
+            {"is_active": True},
+            {"content": 0},
+        ).sort("name", 1)
+        docs = await cursor.to_list(length=200)
+        return [
+            {
+                "id": str(d["_id"]),
+                "name": d["name"],
+                "category": d.get("category"),
+                "description": d.get("description"),
+            }
+            for d in docs
+        ]
+
     if not template_ids:
         return []
 
@@ -297,7 +315,7 @@ async def set_org_templates(org_id: str, body: UpdateTemplatesRequest):
     """Replace the full list of templates assigned to this org. Active templates only."""
     db = await get_database()
     if not ObjectId.is_valid(org_id):
-        raise HTTPException(status_code=400, detail="Invalid organization ID")
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
 
     template_oids = []
     for tid in body.template_ids:
@@ -322,7 +340,7 @@ async def set_org_templates(org_id: str, body: UpdateTemplatesRequest):
         return_document=ReturnDocument.AFTER,
     )
     if not doc:
-        raise HTTPException(status_code=404, detail="Organization not found")
+        raise HTTPException(status_code=404, detail="Organisation not found")
     return serialize_organization(doc)
 
 
@@ -341,7 +359,7 @@ async def list_org_users(org_id: str):
     """
     db = await get_database()
     if not ObjectId.is_valid(org_id):
-        raise HTTPException(status_code=400, detail="Invalid organization ID")
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
     cursor = db["users"].find({"organization_id": ObjectId(org_id)})
     docs = await cursor.to_list(length=500)
     docs.sort(
@@ -367,11 +385,11 @@ async def invite_user(
     """
     db = await get_database()
     if not ObjectId.is_valid(org_id):
-        raise HTTPException(status_code=400, detail="Invalid organization ID")
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
 
     org = await db["organizations"].find_one({"_id": ObjectId(org_id)})
     if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
+        raise HTTPException(status_code=404, detail="Organisation not found")
     if not org.get("is_active", True):
         raise HTTPException(
             status_code=400,
@@ -453,14 +471,14 @@ async def get_invite_link(org_id: str, user_id: str):
     if not ObjectId.is_valid(user_id):
         raise HTTPException(status_code=400, detail="Invalid user ID")
     if not ObjectId.is_valid(org_id):
-        raise HTTPException(status_code=400, detail="Invalid organization ID")
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
 
     # A live invite link into a deactivated org, or for a deactivated user, is
     # an invitation to a dead end — the recipient sets a password and then
     # cannot sign in.
     org = await db["organizations"].find_one({"_id": ObjectId(org_id)}, {"is_active": 1})
     if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
+        raise HTTPException(status_code=404, detail="Organisation not found")
     if not org.get("is_active", True):
         raise HTTPException(
             status_code=400,
@@ -505,7 +523,7 @@ async def update_user_role(org_id: str, user_id: str, body: UpdateRoleRequest):
     if not ObjectId.is_valid(user_id):
         raise HTTPException(status_code=400, detail="Invalid user ID")
     if not ObjectId.is_valid(org_id):
-        raise HTTPException(status_code=400, detail="Invalid organization ID")
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
 
     await _assert_role_allowed(db, ObjectId(org_id), body.role)
 
@@ -515,7 +533,7 @@ async def update_user_role(org_id: str, user_id: str, body: UpdateRoleRequest):
         return_document=ReturnDocument.AFTER,
     )
     if not doc:
-        raise HTTPException(status_code=404, detail="User not found in this organization")
+        raise HTTPException(status_code=404, detail="User not found in this organisation")
     return serialize_user(doc)
 
 
@@ -543,7 +561,7 @@ async def deactivate_user(
         return_document=ReturnDocument.AFTER,
     )
     if not doc:
-        raise HTTPException(status_code=404, detail="User not found in this organization")
+        raise HTTPException(status_code=404, detail="User not found in this organisation")
 
     await revoke_sessions([doc.get("supertokens_user_id")])
     return serialize_user(doc)
@@ -560,7 +578,7 @@ async def reactivate_user(org_id: str, user_id: str):
     if not ObjectId.is_valid(user_id):
         raise HTTPException(status_code=400, detail="Invalid user ID")
     if not ObjectId.is_valid(org_id):
-        raise HTTPException(status_code=400, detail="Invalid organization ID")
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
 
     org = await db["organizations"].find_one({"_id": ObjectId(org_id)}, {"is_active": 1})
     if org and not org.get("is_active", True):
@@ -575,5 +593,5 @@ async def reactivate_user(org_id: str, user_id: str):
         return_document=ReturnDocument.AFTER,
     )
     if not doc:
-        raise HTTPException(status_code=404, detail="User not found in this organization")
+        raise HTTPException(status_code=404, detail="User not found in this organisation")
     return serialize_user(doc)

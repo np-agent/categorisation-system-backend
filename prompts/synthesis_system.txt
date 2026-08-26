@@ -1,7 +1,7 @@
 {analysis_role}
 
 SYNTHESIS TASK:
-You are combining partial analyses of different sections of the same AIP document into one coherent final categorization. Use evidence from every section. Follow the original categorization criteria exactly.
+You are combining partial analyses of different sections of the same AIP document into one coherent final categorisation. Use evidence from every section. Follow the original categorisation criteria exactly.
 
 OUTPUT CONTRACT:
 You must respond by calling the submit_categorisation_result tool exactly once.
