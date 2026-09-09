@@ -40,27 +40,50 @@ def _logo_attachment() -> dict | None:
 
 
 def _email_html(body: str, *, include_logo: bool) -> str:
-    """Wrap email body with SelfBrief full-logo header on a dark brand bar."""
+    """
+    Match the sister-app email shell (base.html): navy header, content block,
+    orange SelfBrief Limited footer.
+    """
     if include_logo:
-        brand = f"""
-        <img src="cid:{_LOGO_CID}" alt="SelfBrief" height="40"
-             style="display: block; height: 40px; width: auto; border: 0;" />
-        """
+        brand = (
+            f'<img src="cid:{_LOGO_CID}" alt="SelfBrief" '
+            'style="max-height: 50px; height: 50px; width: auto; border: 0; display: inline-block;" />'
+        )
     else:
-        brand = """
-        <span style="font-size: 20px; font-weight: 700; color: #ffffff;">SelfBrief</span>
-        """
+        brand = '<span style="font-size: 20px; font-weight: 700; color: #ffffff;">SelfBrief</span>'
 
     return f"""
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; color: #1a1a1a;">
-      <div style="background: #1e2d40; padding: 28px 32px; border-radius: 8px 8px 0 0;">
-        {brand}
+    <html lang="">
+    <body style="font-family: Arial, Helvetica, sans-serif !important; font-size: 14px; -webkit-font-smoothing: antialiased; padding: 20px 0; margin: 0; background: #ffffff; color: #000000;">
+      <div style="max-width: 700px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 5px;">
+        <div style="text-align: center; border-radius: 5px; background-color: #152F4D; padding: 10px 16px;">
+          {brand}
+        </div>
+        <div style="padding: 30px 20px;">
+          {body}
+        </div>
+        <div style="margin-bottom: 20px; text-align: center; background-color: #EF7D30; color: #FFFFFF; border-radius: 5px; height: 50px; line-height: 50px;">
+          <b><a style="color: #FFFFFF; text-decoration: none;" href="https://www.selfbrief.aero/">SelfBrief Limited</a></b>
+        </div>
       </div>
-      <div style="background: #ffffff; padding: 32px 28px; border: 1px solid #e5e7eb; border-top: 0; border-radius: 0 0 8px 8px;">
-        {body}
-      </div>
-    </div>
+    </body>
+    </html>
     """
+
+
+def _cta(href: str, label: str) -> str:
+    """Navy button matching the sister-app .button class."""
+    return (
+        f'<a href="{href}" target="_blank" '
+        'style="background: #152F4D; padding: 10px 15px; color: #fff; text-decoration: none; '
+        'display: inline-block; border-radius: 5px; font-family: Arial, Helvetica, sans-serif; '
+        'font-size: 14px; font-weight: bold;">'
+        f"{label}</a>"
+    )
+
+
+def _p(text: str) -> str:
+    return f'<p style="margin: 0 0 16px; line-height: 1.5;">{text}</p>'
 
 
 def _send(*, to_email: str, subject: str, body: str) -> bool:
@@ -100,28 +123,25 @@ def send_invite_email(to_email: str, invite_link: str, org_name: str) -> bool:
         logger.warning("RESEND_API_KEY not set — skipping invite email to %s", to_email)
         return False
 
+    org = html.escape(org_name)
+    link = html.escape(invite_link)
     try:
         _send(
             to_email=to_email,
             subject=f"You've been invited to {org_name} on SelfBrief",
-            body=f"""
-      <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 8px;">You've been invited to {org_name}</h1>
-      <p style="font-size: 15px; color: #555; margin: 0 0 32px; line-height: 1.6;">
-        A SelfBrief administrator has invited you to join <strong>{org_name}</strong>. Click the button below to set your password and access the platform.
-      </p>
-
-      <a href="{invite_link}"
-         style="display: inline-block; background: #f97316; color: #fff; font-weight: 600; font-size: 14px; padding: 12px 28px; border-radius: 6px; text-decoration: none;">
-        Accept Invite &amp; Set Password
-      </a>
-
-      <p style="font-size: 12px; color: #999; margin: 32px 0 0; line-height: 1.6;">
-        This link expires after use. If you weren't expecting this invitation, you can ignore this email.
-        <br/><br/>
-        Or copy this URL into your browser:<br/>
-        <span style="color: #555;">{invite_link}</span>
-      </p>
-            """,
+            body=(
+                _p(f"You have been invited to join <b>{org}</b> on SelfBrief.")
+                + _p(
+                    f"A SelfBrief administrator has invited you to join <b>{org}</b>. "
+                    "Click the button below to set your password and access the platform."
+                )
+                + f"<p style=\"margin: 0 0 16px;\">{_cta(invite_link, 'Accept Invite &amp; Set Password')}</p>"
+                + '<p style="border-bottom: 1px solid #e8e8e8; margin: 24px 0;"></p>'
+                + _p(
+                    "This link expires after use. If you were not expecting this invitation, you can ignore this email."
+                )
+                + _p(f"Or copy this URL into your browser:<br>{link}")
+            ),
         )
         logger.info("Invite email sent to %s", to_email)
         return True
@@ -146,16 +166,15 @@ def send_job_created_email(
         _send(
             to_email=to_email,
             subject=f"Categorisation started: {job_title}",
-            body=f"""
-      <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">Categorisation started</h1>
-      <p style="font-size: 15px; color: #555; margin: 0 0 8px; line-height: 1.6;">
-        The Categorisation job titled <strong>{title}</strong> for airport <strong>{airport}</strong> has been submitted and categorisation is now in progress.
-      </p>
-      <p style="font-size: 15px; color: #555; margin: 0; line-height: 1.6;">
-        We will send you another email once it is complete.
-      </p>
-      <p style="font-size: 12px; color: #999; margin: 40px 0 0;">You're receiving this because you created this job on SelfBrief.</p>
-            """,
+            body=(
+                _p(
+                    f"The Categorisation job titled <b>{title}</b> for airport "
+                    f"<b>{airport}</b> has been submitted and categorisation is now in progress."
+                )
+                + _p("We will send you another email once it is complete.")
+                + '<p style="border-bottom: 1px solid #e8e8e8; margin: 24px 0;"></p>'
+                + _p("You are receiving this because you created this job on SelfBrief.")
+            ),
         )
         logger.info("Job created email sent to %s", to_email)
         return True
@@ -180,16 +199,15 @@ def send_job_completed_email(
         _send(
             to_email=to_email,
             subject=f"Categorisation complete: {job_title}",
-            body=f"""
-      <div style="display: inline-block; background: #dcfce7; color: #166534; font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 99px; margin-bottom: 16px;">
-        Completed
-      </div>
-      <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">Categorisation complete</h1>
-      <p style="font-size: 15px; color: #555; margin: 0; line-height: 1.6;">
-        The Categorisation job titled <strong>{title}</strong> for airport <strong>{airport}</strong> has completed successfully. Log in to SelfBrief to view the results.
-      </p>
-      <p style="font-size: 12px; color: #999; margin: 40px 0 0;">You're receiving this because you created this job on SelfBrief.</p>
-            """,
+            body=(
+                _p("<b>Completed</b>")
+                + _p(
+                    f"The Categorisation job titled <b>{title}</b> for airport "
+                    f"<b>{airport}</b> has completed successfully. Log in to SelfBrief to view the results."
+                )
+                + '<p style="border-bottom: 1px solid #e8e8e8; margin: 24px 0;"></p>'
+                + _p("You are receiving this because you created this job on SelfBrief.")
+            ),
         )
         logger.info("Job completed email sent to %s", to_email)
         return True
@@ -214,16 +232,15 @@ def send_job_failed_email(
         _send(
             to_email=to_email,
             subject=f"Categorisation failed: {job_title}",
-            body=f"""
-      <div style="display: inline-block; background: #fee2e2; color: #991b1b; font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 99px; margin-bottom: 16px;">
-        Failed
-      </div>
-      <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">Categorisation failed</h1>
-      <p style="font-size: 15px; color: #555; margin: 0; line-height: 1.6;">
-        The Categorisation job titled <strong>{title}</strong> for airport <strong>{airport}</strong> could not be completed.
-      </p>
-      <p style="font-size: 12px; color: #999; margin: 40px 0 0;">You're receiving this because you created this job on SelfBrief.</p>
-            """,
+            body=(
+                _p("<b>Failed</b>")
+                + _p(
+                    f"The Categorisation job titled <b>{title}</b> for airport "
+                    f"<b>{airport}</b> could not be completed."
+                )
+                + '<p style="border-bottom: 1px solid #e8e8e8; margin: 24px 0;"></p>'
+                + _p("You are receiving this because you created this job on SelfBrief.")
+            ),
         )
         logger.info("Job failed email sent to %s", to_email)
         return True
@@ -240,28 +257,21 @@ def send_password_reset_email(to_email: str, reset_link: str) -> bool:
         logger.warning("RESEND_API_KEY not set — skipping password reset email to %s", to_email)
         return False
 
+    link = html.escape(reset_link)
     try:
         _send(
             to_email=to_email,
             subject="Reset your SelfBrief password",
-            body=f"""
-      <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 8px;">Reset your password</h1>
-      <p style="font-size: 15px; color: #555; margin: 0 0 32px; line-height: 1.6;">
-        We received a request to reset the password for your SelfBrief account. Click the button below to choose a new password.
-      </p>
-
-      <a href="{reset_link}"
-         style="display: inline-block; background: #f97316; color: #fff; font-weight: 600; font-size: 14px; padding: 12px 28px; border-radius: 6px; text-decoration: none;">
-        Reset Password
-      </a>
-
-      <p style="font-size: 12px; color: #999; margin: 32px 0 0; line-height: 1.6;">
-        This link expires in 1 hour. If you didn't request a password reset, you can safely ignore this email.
-        <br/><br/>
-        Or copy this URL into your browser:<br/>
-        <span style="color: #555;">{reset_link}</span>
-      </p>
-            """,
+            body=(
+                _p("We received a request to reset the password for your SelfBrief account.")
+                + _p("Click the button below to choose a new password.")
+                + f"<p style=\"margin: 0 0 16px;\">{_cta(reset_link, 'Reset Password')}</p>"
+                + '<p style="border-bottom: 1px solid #e8e8e8; margin: 24px 0;"></p>'
+                + _p(
+                    "This link expires in 1 hour. If you did not request a password reset, you can safely ignore this email."
+                )
+                + _p(f"Or copy this URL into your browser:<br>{link}")
+            ),
         )
         logger.info("Password reset email sent to %s", to_email)
         return True
