@@ -1,0 +1,10 @@
+The following aviation AIP document was analysed in {chunk_count} sections due to its length. Each section was analysed using the categorisation criteria below.
+
+Original categorisation criteria:
+---
+{template_content}
+---
+
+{chunk_sections}
+
+Using the full picture from all sections, provide a single final categorisation. Evidence from any section is valid. Call submit_categorisation_result with your final reasoning, final_category, and confidence_level.

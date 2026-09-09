@@ -1,9 +1,10 @@
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 load_dotenv()
@@ -13,16 +14,21 @@ import config.supertoken_config  # noqa: F401,E402
 from supertokens_python.framework.fastapi import get_middleware  # noqa: E402
 
 from api.health import router as health_router  # noqa: E402
-from api.v1.users import router as users_router  # noqa: E402
+from api.v1.airports import router as airports_router  # noqa: E402
+from api.v1.jobs import router as jobs_router  # noqa: E402
+from api.v1.organizations import router as organizations_router  # noqa: E402
+from api.v1.templates import router as templates_router  # noqa: E402
+from api.v1.me import router as me_router  # noqa: E402
+from api.v1.legal import router as legal_router  # noqa: E402
 from config.cors import get_cors_origins  # noqa: E402
+from config.limiter import limiter  # noqa: E402
 from config.settings import settings  # noqa: E402
 from database.session import close_db, connect_db  # noqa: E402
 from middleware.rate_limit import RateLimitMiddleware  # noqa: E402
-from middleware.verify_session import verify_and_log_session  # noqa: E402
-from config.limiter import limiter
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
+from services.job_poller import job_poller_loop  # noqa: E402
+from slowapi import _rate_limit_exceeded_handler  # noqa: E402
+from slowapi.errors import RateLimitExceeded  # noqa: E402
+from slowapi.middleware import SlowAPIMiddleware  # noqa: E402
 
 
 port = int(os.environ.get("PORT", 8000))
@@ -31,13 +37,19 @@ port = int(os.environ.get("PORT", 8000))
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_db()
-    yield
-    await close_db()
+    stop_event = asyncio.Event()
+    poller_task = asyncio.create_task(job_poller_loop(stop_event))
+    try:
+        yield
+    finally:
+        stop_event.set()
+        await poller_task
+        await close_db()
 
 
 app = FastAPI(
     title="Categorisation System Backend",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -49,7 +61,6 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 
 # CORS
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_cors_origins(),
@@ -65,8 +76,14 @@ async def root():
 
 
 app.include_router(health_router, prefix="/api/health", tags=["Health"])
-app.include_router(users_router, prefix="/api/v1/users", tags=["Users"])
-# app.include_router(users_router, prefix="/api/v1/users", tags=["Users"], dependencies=[Depends(verify_and_log_session)])
+app.include_router(me_router, prefix="/api/v1/me", tags=["Me"])
+app.include_router(legal_router, prefix="/api/v1/legal", tags=["Legal"])
+app.include_router(airports_router, prefix="/api/v1/airports", tags=["Airports"])
+app.include_router(templates_router, prefix="/api/v1/templates", tags=["Templates"])
+app.include_router(organizations_router, prefix="/api/v1/organizations", tags=["Organisations"])
+# British spelling alias used by the frontend
+app.include_router(organizations_router, prefix="/api/v1/organisations", tags=["Organisations"])
+app.include_router(jobs_router, prefix="/api/v1/jobs", tags=["Jobs"])
 
 
 if __name__ == "__main__":
