@@ -19,6 +19,7 @@ from api.v1.jobs import router as jobs_router  # noqa: E402
 from api.v1.organizations import router as organizations_router  # noqa: E402
 from api.v1.templates import router as templates_router  # noqa: E402
 from api.v1.me import router as me_router  # noqa: E402
+from api.v1.legal import router as legal_router  # noqa: E402
 from config.cors import get_cors_origins  # noqa: E402
 from config.limiter import limiter  # noqa: E402
 from config.settings import settings  # noqa: E402
@@ -76,6 +77,7 @@ async def root():
 
 app.include_router(health_router, prefix="/api/health", tags=["Health"])
 app.include_router(me_router, prefix="/api/v1/me", tags=["Me"])
+app.include_router(legal_router, prefix="/api/v1/legal", tags=["Legal"])
 app.include_router(airports_router, prefix="/api/v1/airports", tags=["Airports"])
 app.include_router(templates_router, prefix="/api/v1/templates", tags=["Templates"])
 app.include_router(organizations_router, prefix="/api/v1/organizations", tags=["Organisations"])

@@ -1,6 +1,8 @@
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel
+
+from services.legal import has_accepted_current_eula
 
 
 AppRole = Literal["super-admin", "admin", "user"]
@@ -21,6 +23,8 @@ class UserOut(BaseModel):
     deactivated_by_org: bool
     invite_status: InviteStatus
     created_at: datetime
+    eula_accepted: bool
+    eula_accepted_at: Optional[datetime] = None
 
     class Config:
         populate_by_name = True
@@ -38,4 +42,6 @@ def serialize_user(doc: dict) -> UserOut:
         deactivated_by_org=bool(doc.get("deactivated_by_org", False)),
         invite_status=doc.get("invite_status", "accepted"),
         created_at=doc["created_at"],
+        eula_accepted=has_accepted_current_eula(doc),
+        eula_accepted_at=doc.get("eula_accepted_at"),
     )

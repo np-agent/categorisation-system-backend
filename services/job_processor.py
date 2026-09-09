@@ -40,12 +40,14 @@ async def notify_job(db, job_doc: dict, event: str) -> None:
             return
         to_email = creator["email"]
         title = job_doc.get("title", "")
+        icao = job_doc.get("airport_icao")
+        name = job_doc.get("airport_name")
         if event == "created":
-            send_job_created_email(to_email, title)
+            send_job_created_email(to_email, title, icao, name)
         elif event == "ended":
-            send_job_completed_email(to_email, title)
+            send_job_completed_email(to_email, title, icao, name)
         elif event == "failed":
-            send_job_failed_email(to_email, title)
+            send_job_failed_email(to_email, title, icao, name)
     except Exception as exc:
         logger.error("notify_job error (%s): %s", event, exc)
 

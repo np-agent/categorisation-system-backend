@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pymongo import ReturnDocument
 
 from api.deps import build_user_map, get_current_db_user
 from database.session import get_database
@@ -9,6 +10,7 @@ from models.job import (
     JobCreate,
     JobOut,
     JobSummary,
+    caller_acknowledged_job,
     serialize_job,
     serialize_job_summary,
 )
@@ -83,7 +85,7 @@ async def get_job(
 ):
     db = await get_database()
     doc = await _load_visible_job(db, job_id, caller)
-    return serialize_job(doc)
+    return serialize_job(doc, caller)
 
 
 @router.post("", response_model=JobOut, status_code=201)
@@ -142,7 +144,7 @@ async def create_job(
         result = await db["jobs"].insert_one(job_doc)
         created = await db["jobs"].find_one({"_id": result.inserted_id})
         await notify_job(db, created, "created")
-        return serialize_job(created)
+        return serialize_job(created, caller)
 
     result = await db["jobs"].insert_one(job_doc)
     job_id = result.inserted_id
@@ -169,7 +171,7 @@ async def create_job(
 
     created = await db["jobs"].find_one({"_id": job_id})
     await notify_job(db, created, "created")
-    return serialize_job(created)
+    return serialize_job(created, caller)
 
 
 @router.get("/{job_id}/status", response_model=JobOut)
@@ -185,13 +187,13 @@ async def check_job_status(
     doc = await _load_visible_job(db, job_id, caller)
 
     if doc["status"] not in ("running", "pending"):
-        return serialize_job(doc)
+        return serialize_job(doc, caller)
 
     if not doc.get("batch_id"):
         raise HTTPException(status_code=400, detail="Job has no batch ID to poll")
 
     updated = await process_running_job(db, doc)
-    return serialize_job(updated or doc)
+    return serialize_job(updated or doc, caller)
 
 
 @router.post("/{job_id}/trigger", response_model=JobOut)
@@ -242,7 +244,37 @@ async def trigger_job(
         raise HTTPException(status_code=502, detail=f"Failed to submit batch job: {e}")
 
     updated = await db["jobs"].find_one({"_id": ObjectId(job_id)})
-    return serialize_job(updated)
+    return serialize_job(updated, caller)
+
+
+@router.post("/{job_id}/advisory", response_model=JobOut)
+async def acknowledge_job_advisory(
+    job_id: str,
+    caller: dict = Depends(get_current_db_user),
+):
+    """
+    Record that this user accepted the advisory notice for this job.
+    Later views of the same job by the same user skip the popup.
+    """
+    db = await get_database()
+    doc = await _load_visible_job(db, job_id, caller)
+    job_id_str = str(doc["_id"])
+
+    if not caller_acknowledged_job(caller, job_id_str):
+        caller = await db["users"].find_one_and_update(
+            {"_id": caller["_id"]},
+            {
+                "$push": {
+                    "advisory_job_acknowledgements": {
+                        "job_id": job_id_str,
+                        "accepted_at": datetime.now(timezone.utc),
+                    }
+                },
+            },
+            return_document=ReturnDocument.AFTER,
+        ) or caller
+
+    return serialize_job(doc, caller)
 
 
 @router.delete("/{job_id}", status_code=204)

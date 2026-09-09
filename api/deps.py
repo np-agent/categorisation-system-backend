@@ -5,9 +5,11 @@ from supertokens_python.recipe.session import SessionContainer
 from supertokens_python.recipe.session.framework.fastapi import verify_session
 
 from database.session import get_database
+from services.legal import has_accepted_current_eula
 
 
 ORG_INACTIVE_DETAIL = "Your organisation has been deactivated."
+EULA_REQUIRED_DETAIL = "Please accept the End User Licence Agreement to continue."
 
 
 async def assert_org_active(db, organization_id) -> None:
@@ -29,12 +31,10 @@ async def assert_org_active(db, organization_id) -> None:
         raise HTTPException(status_code=403, detail=ORG_INACTIVE_DETAIL)
 
 
-async def get_current_db_user(
-    session: SessionContainer = Depends(verify_session()),
-) -> dict:
+async def _load_active_user(session: SessionContainer) -> dict:
     """
-    Resolve the authenticated SuperTokens session to our MongoDB users document.
-    All app-level foreign keys should use this document's _id, not the ST id.
+    Resolve the SuperTokens session to an active MongoDB user whose organisation
+    is also active. Does not require EULA acceptance.
     """
     db = await get_database()
     user = await db["users"].find_one({"supertokens_user_id": session.get_user_id()})
@@ -43,6 +43,27 @@ async def get_current_db_user(
     if not user.get("is_active", True):
         raise HTTPException(status_code=403, detail="Your account has been deactivated.")
     await assert_org_active(db, user.get("organization_id"))
+    return user
+
+
+async def get_current_db_user_pre_eula(
+    session: SessionContainer = Depends(verify_session()),
+) -> dict:
+    """Active user dependency used only for accepting the EULA."""
+    return await _load_active_user(session)
+
+
+async def get_current_db_user(
+    session: SessionContainer = Depends(verify_session()),
+) -> dict:
+    """
+    Resolve the authenticated SuperTokens session to our MongoDB users document.
+    All app-level foreign keys should use this document's _id, not the ST id.
+    The current EULA must have been accepted before any other API can be used.
+    """
+    user = await _load_active_user(session)
+    if not has_accepted_current_eula(user):
+        raise HTTPException(status_code=403, detail=EULA_REQUIRED_DETAIL)
     return user
 
 

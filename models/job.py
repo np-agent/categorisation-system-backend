@@ -61,6 +61,7 @@ class JobOut(BaseModel):
     chunks: list[JobChunk]
     synthesis: Optional[JobSynthesis]
     final_result: Optional[JobFinalResult]
+    advisory_acknowledged: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -126,7 +127,17 @@ def _legacy_final_result(doc: dict) -> JobFinalResult | None:
     )
 
 
-def serialize_job(doc: dict) -> JobOut:
+def caller_acknowledged_job(caller: dict | None, job_id: str) -> bool:
+    if not caller:
+        return False
+    job_id_str = str(job_id)
+    for entry in caller.get("advisory_job_acknowledgements") or []:
+        if str(entry.get("job_id")) == job_id_str:
+            return True
+    return False
+
+
+def serialize_job(doc: dict, caller: dict | None = None) -> JobOut:
     final = None
     if doc.get("final_result"):
         fr = doc["final_result"]
@@ -162,6 +173,7 @@ def serialize_job(doc: dict) -> JobOut:
         chunks=chunks,
         synthesis=_serialize_synthesis(doc.get("synthesis")),
         final_result=final,
+        advisory_acknowledged=caller_acknowledged_job(caller, str(doc["_id"])),
         created_at=doc["created_at"],
         updated_at=doc["updated_at"],
     )

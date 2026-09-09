@@ -8,6 +8,7 @@ The brand logo is embedded inline via CID (no external image hosting required).
 from __future__ import annotations
 
 import base64
+import html
 import logging
 from pathlib import Path
 
@@ -78,6 +79,18 @@ def _send(*, to_email: str, subject: str, body: str) -> bool:
     return True
 
 
+def _airport_label(airport_icao: str | None, airport_name: str | None) -> str:
+    icao = (airport_icao or "").strip().upper()
+    name = (airport_name or "").strip()
+    if icao and name:
+        return f"{icao} ({name})"
+    return icao or name or "unknown airport"
+
+
+def _job_refs(job_title: str, airport_icao: str | None, airport_name: str | None) -> tuple[str, str]:
+    return html.escape(job_title or ""), html.escape(_airport_label(airport_icao, airport_name))
+
+
 def send_invite_email(to_email: str, invite_link: str, org_name: str) -> bool:
     """
     Send a branded invite email to a new user.
@@ -117,12 +130,18 @@ def send_invite_email(to_email: str, invite_link: str, org_name: str) -> bool:
         return False
 
 
-def send_job_created_email(to_email: str, job_title: str) -> bool:
+def send_job_created_email(
+    to_email: str,
+    job_title: str,
+    airport_icao: str | None = None,
+    airport_name: str | None = None,
+) -> bool:
     """Notify the job creator that their categorisation job has been submitted."""
     if not settings.RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set — skipping job created email to %s", to_email)
         return False
 
+    title, airport = _job_refs(job_title, airport_icao, airport_name)
     try:
         _send(
             to_email=to_email,
@@ -130,10 +149,10 @@ def send_job_created_email(to_email: str, job_title: str) -> bool:
             body=f"""
       <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">Categorisation started</h1>
       <p style="font-size: 15px; color: #555; margin: 0 0 8px; line-height: 1.6;">
-        Your job <strong>{job_title}</strong> has been submitted and categorisation is now in progress.
+        The Categorisation job titled <strong>{title}</strong> for airport <strong>{airport}</strong> has been submitted and categorisation is now in progress.
       </p>
       <p style="font-size: 15px; color: #555; margin: 0; line-height: 1.6;">
-        We'll send you another email once it's complete.
+        We will send you another email once it is complete.
       </p>
       <p style="font-size: 12px; color: #999; margin: 40px 0 0;">You're receiving this because you created this job on SelfBrief.</p>
             """,
@@ -145,12 +164,18 @@ def send_job_created_email(to_email: str, job_title: str) -> bool:
         return False
 
 
-def send_job_completed_email(to_email: str, job_title: str) -> bool:
+def send_job_completed_email(
+    to_email: str,
+    job_title: str,
+    airport_icao: str | None = None,
+    airport_name: str | None = None,
+) -> bool:
     """Notify the job creator that their categorisation job completed successfully."""
     if not settings.RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set — skipping job completed email to %s", to_email)
         return False
 
+    title, airport = _job_refs(job_title, airport_icao, airport_name)
     try:
         _send(
             to_email=to_email,
@@ -161,7 +186,7 @@ def send_job_completed_email(to_email: str, job_title: str) -> bool:
       </div>
       <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">Categorisation complete</h1>
       <p style="font-size: 15px; color: #555; margin: 0; line-height: 1.6;">
-        The categorisation for your job <strong>{job_title}</strong> has completed successfully. Log in to SelfBrief to view the results.
+        The Categorisation job titled <strong>{title}</strong> for airport <strong>{airport}</strong> has completed successfully. Log in to SelfBrief to view the results.
       </p>
       <p style="font-size: 12px; color: #999; margin: 40px 0 0;">You're receiving this because you created this job on SelfBrief.</p>
             """,
@@ -173,12 +198,18 @@ def send_job_completed_email(to_email: str, job_title: str) -> bool:
         return False
 
 
-def send_job_failed_email(to_email: str, job_title: str) -> bool:
+def send_job_failed_email(
+    to_email: str,
+    job_title: str,
+    airport_icao: str | None = None,
+    airport_name: str | None = None,
+) -> bool:
     """Notify the job creator that their categorisation job failed."""
     if not settings.RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set — skipping job failed email to %s", to_email)
         return False
 
+    title, airport = _job_refs(job_title, airport_icao, airport_name)
     try:
         _send(
             to_email=to_email,
@@ -189,7 +220,7 @@ def send_job_failed_email(to_email: str, job_title: str) -> bool:
       </div>
       <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 12px;">Categorisation failed</h1>
       <p style="font-size: 15px; color: #555; margin: 0; line-height: 1.6;">
-        The categorisation for your job <strong>{job_title}</strong> could not be completed.
+        The Categorisation job titled <strong>{title}</strong> for airport <strong>{airport}</strong> could not be completed.
       </p>
       <p style="font-size: 12px; color: #999; margin: 40px 0 0;">You're receiving this because you created this job on SelfBrief.</p>
             """,
