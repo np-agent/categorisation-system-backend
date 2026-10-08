@@ -11,7 +11,7 @@ InviteStatus = Literal["accepted", "pending"]
 
 class UserOut(BaseModel):
     id: str
-    supertokens_user_id: str
+    cms_user_id: Optional[str] = None
     email: str
     full_name: str
     organization_id: str
@@ -33,7 +33,7 @@ class UserOut(BaseModel):
 def serialize_user(doc: dict) -> UserOut:
     return UserOut(
         id=str(doc["_id"]),
-        supertokens_user_id=doc["supertokens_user_id"],
+        cms_user_id=str(doc["cms_user_id"]) if doc.get("cms_user_id") else None,
         email=doc["email"],
         full_name=doc.get("full_name", ""),
         organization_id=str(doc["organization_id"]),

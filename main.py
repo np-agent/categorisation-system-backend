@@ -9,10 +9,6 @@ from starlette.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
-# Must be imported before the app is created so the SuperTokens SDK is initialized.
-import config.supertoken_config  # noqa: F401,E402
-from supertokens_python.framework.fastapi import get_middleware  # noqa: E402
-
 from api.health import router as health_router  # noqa: E402
 from api.v1.airports import router as airports_router  # noqa: E402
 from api.v1.jobs import router as jobs_router  # noqa: E402
@@ -56,7 +52,6 @@ app = FastAPI(
 # Rate limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(get_middleware())
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 

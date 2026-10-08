@@ -35,8 +35,9 @@ class Database:
         db = cls.db
 
         # users
+        await cls._drop_legacy_user_identity(db["users"])
         await db["users"].create_indexes([
-            IndexModel([("supertokens_user_id", ASCENDING)], unique=True),
+            IndexModel([("cms_user_id", ASCENDING)], unique=True, sparse=True),
             IndexModel([("email", ASCENDING)], unique=True),
             IndexModel([("organization_id", ASCENDING)]),
         ])
@@ -44,6 +45,7 @@ class Database:
         # organisations
         await db["organizations"].create_indexes([
             IndexModel([("slug", ASCENDING)], unique=True),
+            IndexModel([("cms_organisation_id", ASCENDING)], unique=True, sparse=True),
         ])
 
         # airports
@@ -68,3 +70,14 @@ class Database:
         ])
 
         print("Database indexes ensured")
+
+    @classmethod
+    async def _drop_legacy_user_identity(cls, users) -> None:
+        """Remove the old email-password identity field and its unique index."""
+        info = await users.index_information()
+        if "supertokens_user_id_1" in info:
+            await users.drop_index("supertokens_user_id_1")
+        await users.update_many(
+            {"supertokens_user_id": {"$exists": True}},
+            {"$unset": {"supertokens_user_id": ""}},
+        )

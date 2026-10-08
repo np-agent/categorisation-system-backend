@@ -8,13 +8,12 @@ class Settings(BaseSettings):
     MONGO_URI: str = "mongodb://localhost:27017"
     MONGO_DB_NAME: str = "selfbrief_dev"
 
-    # Domains (required by SuperTokens)
-    API_DOMAIN: str = "http://localhost:8000"
+    # Frontend origin, used for CORS.
     WEBSITE_DOMAIN: str = "http://localhost:3000"
 
-    # SuperTokens
-    SUPERTOKENS_CONNECTION_URI: str | None = None
-    SUPERTOKENS_API_KEY: str | None = None
+    # SelfBrief CMS SSO
+    SELFBRIEF_ISSUER: str = "https://dev-cms.selfbrief.aero/o"
+    SELFBRIEF_BASE_URL: str = "https://dev-cms.selfbrief.aero"
 
     # AWS S3
     AWS_ACCESS_KEY_ID: str | None = None

@@ -1,11 +1,10 @@
 """Shared FastAPI dependencies."""
 
-from fastapi import Depends, HTTPException
-from supertokens_python.recipe.session import SessionContainer
-from supertokens_python.recipe.session.framework.fastapi import verify_session
+from fastapi import Depends, Header, HTTPException
 
 from database.session import get_database
 from services.legal import has_accepted_current_eula
+from services.sso import fetch_cms_me, remember_access_token, upsert_user_from_claims
 
 
 ORG_INACTIVE_DETAIL = "Your organisation has been deactivated."
@@ -25,43 +24,47 @@ async def assert_org_active(db, organization_id) -> None:
     org = await db["organizations"].find_one(
         {"_id": organization_id}, {"is_active": 1}
     )
-    # Fail closed: a missing org is as disqualifying as an inactive one,
-    # otherwise a missing organisation_id would quietly grant access.
     if org is None or not org.get("is_active", True):
         raise HTTPException(status_code=403, detail=ORG_INACTIVE_DETAIL)
 
 
-async def _load_active_user(session: SessionContainer) -> dict:
-    """
-    Resolve the SuperTokens session to an active MongoDB user whose organisation
-    is also active. Does not require EULA acceptance.
-    """
-    db = await get_database()
-    user = await db["users"].find_one({"supertokens_user_id": session.get_user_id()})
-    if not user:
-        raise HTTPException(status_code=404, detail="User profile not found")
+async def _bearer_token(authorization: str | None = Header(default=None)) -> str:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return token.strip()
+
+
+async def _load_active_user(access_token: str, id_token: str | None = None) -> dict:
+    claims = await fetch_cms_me(access_token, id_token)
+    user = await upsert_user_from_claims(claims)
+    await remember_access_token(user, access_token)
     if not user.get("is_active", True):
         raise HTTPException(status_code=403, detail="Your account has been deactivated.")
+    db = await get_database()
     await assert_org_active(db, user.get("organization_id"))
     return user
 
 
 async def get_current_db_user_pre_eula(
-    session: SessionContainer = Depends(verify_session()),
+    access_token: str = Depends(_bearer_token),
+    id_token: str | None = Header(default=None, alias="X-SelfBrief-Id-Token"),
 ) -> dict:
     """Active user dependency used only for accepting the EULA."""
-    return await _load_active_user(session)
+    return await _load_active_user(access_token, id_token)
 
 
 async def get_current_db_user(
-    session: SessionContainer = Depends(verify_session()),
+    access_token: str = Depends(_bearer_token),
+    id_token: str | None = Header(default=None, alias="X-SelfBrief-Id-Token"),
 ) -> dict:
     """
-    Resolve the authenticated SuperTokens session to our MongoDB users document.
-    All app-level foreign keys should use this document's _id, not the ST id.
+    Resolve the CMS access token to our MongoDB users document.
     The current EULA must have been accepted before any other API can be used.
     """
-    user = await _load_active_user(session)
+    user = await _load_active_user(access_token, id_token)
     if not has_accepted_current_eula(user):
         raise HTTPException(status_code=403, detail=EULA_REQUIRED_DETAIL)
     return user
@@ -71,8 +74,7 @@ async def build_user_map(db, creator_ids: list) -> dict:
     """
     Build a lookup map for creator ids.
 
-    Keys include both str(Mongo _id) and supertokens_user_id so legacy
-    documents that still store the ST id can resolve email/name.
+    Keys are the Mongo user id and the CMS user id.
     """
     from bson import ObjectId
 
@@ -80,7 +82,7 @@ async def build_user_map(db, creator_ids: list) -> dict:
         return {}
 
     oids = []
-    st_ids = []
+    extra_ids = []
     for raw in creator_ids:
         if raw is None:
             continue
@@ -89,13 +91,13 @@ async def build_user_map(db, creator_ids: list) -> dict:
         elif ObjectId.is_valid(str(raw)) and len(str(raw)) == 24:
             oids.append(ObjectId(str(raw)))
         else:
-            st_ids.append(str(raw))
+            extra_ids.append(str(raw))
 
     query: dict = {"$or": []}
     if oids:
         query["$or"].append({"_id": {"$in": oids}})
-    if st_ids:
-        query["$or"].append({"supertokens_user_id": {"$in": st_ids}})
+    if extra_ids:
+        query["$or"].append({"cms_user_id": {"$in": extra_ids}})
     if not query["$or"]:
         return {}
 
@@ -103,8 +105,8 @@ async def build_user_map(db, creator_ids: list) -> dict:
     user_map: dict = {}
     for u in users:
         user_map[str(u["_id"])] = u
-        if u.get("supertokens_user_id"):
-            user_map[u["supertokens_user_id"]] = u
+        if u.get("cms_user_id"):
+            user_map[str(u["cms_user_id"])] = u
     return user_map
 
 
