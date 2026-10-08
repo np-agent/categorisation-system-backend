@@ -34,8 +34,7 @@ async def notify_job(db, job_doc: dict, event: str) -> None:
         ):
             creator = await db["users"].find_one({"_id": ObjectId(str(creator_ref))})
         if not creator and creator_ref:
-            # Legacy jobs stored the SuperTokens user id
-            creator = await db["users"].find_one({"supertokens_user_id": str(creator_ref)})
+            creator = await db["users"].find_one({"cms_user_id": str(creator_ref)})
         if not creator or not creator.get("email"):
             return
         to_email = creator["email"]

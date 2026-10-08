@@ -1,6 +1,5 @@
 """
 Email delivery via Resend.
-Used by the SuperTokens email delivery override and any direct sending (e.g. invites).
 
 The brand logo is embedded inline via CID (no external image hosting required).
 """
@@ -248,33 +247,3 @@ def send_job_failed_email(
         logger.error("Failed to send job failed email to %s: %s", to_email, exc)
         return False
 
-
-def send_password_reset_email(to_email: str, reset_link: str) -> bool:
-    """
-    Called by the SuperTokens email delivery override for forgot-password flows.
-    """
-    if not settings.RESEND_API_KEY:
-        logger.warning("RESEND_API_KEY not set — skipping password reset email to %s", to_email)
-        return False
-
-    link = html.escape(reset_link)
-    try:
-        _send(
-            to_email=to_email,
-            subject="Reset your SelfBrief password",
-            body=(
-                _p("We received a request to reset the password for your SelfBrief account.")
-                + _p("Click the button below to choose a new password.")
-                + f"<p style=\"margin: 0 0 16px;\">{_cta(reset_link, 'Reset Password')}</p>"
-                + '<p style="border-bottom: 1px solid #e8e8e8; margin: 24px 0;"></p>'
-                + _p(
-                    "This link expires in 1 hour. If you did not request a password reset, you can safely ignore this email."
-                )
-                + _p(f"Or copy this URL into your browser:<br>{link}")
-            ),
-        )
-        logger.info("Password reset email sent to %s", to_email)
-        return True
-    except Exception as exc:
-        logger.error("Failed to send password reset email to %s: %s", to_email, exc)
-        return False

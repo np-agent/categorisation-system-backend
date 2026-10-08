@@ -1,5 +1,4 @@
 import re
-import secrets
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
@@ -18,7 +17,6 @@ from models.organization import (
     serialize_organization,
 )
 from models.user import UserOut, serialize_user
-from services.sessions import revoke_sessions
 
 router = APIRouter()
 
@@ -231,11 +229,6 @@ async def _set_org_active(org_id: str, is_active: bool) -> OrganizationOut:
         await _cascade_reactivate_members(db, oid)
     else:
         await _cascade_deactivate_members(db, oid)
-        # Kick everyone out now rather than waiting for their session to lapse.
-        members = await db["users"].find(
-            {"organization_id": oid}, {"supertokens_user_id": 1}
-        ).to_list(length=1000)
-        await revoke_sessions(m.get("supertokens_user_id") for m in members)
 
     return serialize_organization(doc)
 
@@ -377,144 +370,19 @@ async def invite_user(
     body: InviteUserRequest,
     caller: dict = Depends(get_current_db_user),
 ):
-    """
-    Invite a user to the organisation.
-    Creates their SuperTokens account with a random password, then immediately
-    triggers a password-reset email so they set their own password on first login.
-    The user record is stored with invite_status='pending'.
-    """
-    db = await get_database()
-    if not ObjectId.is_valid(org_id):
-        raise HTTPException(status_code=400, detail="Invalid organisation ID")
-
-    org = await db["organizations"].find_one({"_id": ObjectId(org_id)})
-    if not org:
-        raise HTTPException(status_code=404, detail="Organisation not found")
-    if not org.get("is_active", True):
-        raise HTTPException(
-            status_code=400,
-            detail="This organisation is inactive. Reactivate it before inviting users.",
-        )
-
-    await _assert_role_allowed(db, org["_id"], body.role)
-
-    # Check if already in our DB
-    existing_user = await db["users"].find_one({"email": body.email})
-    if existing_user:
-        raise HTTPException(
-            status_code=409,
-            detail="A user with this email already exists in the system.",
-        )
-
-    # Create SuperTokens account
-    from supertokens_python.recipe.emailpassword.asyncio import sign_up
-    from supertokens_python.recipe.emailpassword.interfaces import SignUpOkResult
-
-    random_password = secrets.token_urlsafe(24)
-    signup_result = await sign_up("public", body.email, random_password)
-    if not isinstance(signup_result, SignUpOkResult):
-        raise HTTPException(
-            status_code=409,
-            detail="An account with this email already exists in the auth system.",
-        )
-
-    st_user_id = signup_result.user.id
-
-    # Create password reset token so the user can set their password
-    from supertokens_python.recipe.emailpassword.asyncio import create_reset_password_token
-    from supertokens_python.recipe.emailpassword.interfaces import CreateResetPasswordOkResult
-
-    token_result = await create_reset_password_token("public", st_user_id, body.email)
-    invite_link: Optional[str] = None
-    if isinstance(token_result, CreateResetPasswordOkResult):
-        from config.settings import settings
-        token = token_result.token
-        invite_link = (
-            f"{settings.WEBSITE_DOMAIN}/reset-password"
-            f"?token={token}&rid=emailpassword"
-        )
-
-    # Try to send the invite email via Resend; fall back to copy-link if not configured
-    from services.email import send_invite_email
-    email_sent = False
-    if invite_link:
-        email_sent = send_invite_email(
-            to_email=body.email,
-            invite_link=invite_link,
-            org_name=org["name"],
-        )
-
-    now = datetime.now(timezone.utc)
-    user_doc = {
-        "supertokens_user_id": st_user_id,
-        "email": body.email,
-        "full_name": body.full_name or body.email.split("@")[0],
-        "organization_id": ObjectId(org_id),
-        "role": body.role,
-        "is_active": True,
-        "invite_status": "pending",
-        # Keep the link stored so it can be re-sent or copied if email failed
-        "invite_link": invite_link,
-        "invite_email_sent": email_sent,
-        "created_at": now,
-        "created_by_user_id": caller["_id"],
-    }
-    result = await db["users"].insert_one(user_doc)
-    created = await db["users"].find_one({"_id": result.inserted_id})
-    return serialize_user(created)
+    """Users sign in with SelfBrief CMS. Local password invites are disabled."""
+    raise HTTPException(
+        status_code=400,
+        detail="Users sign in with SelfBrief. Add them in CMS rather than inviting them here.",
+    )
 
 
 @router.get("/{org_id}/invite/{user_id}/link")
 async def get_invite_link(org_id: str, user_id: str):
-    """Return the invite link for a pending user (for copy-to-clipboard)."""
-    db = await get_database()
-    if not ObjectId.is_valid(user_id):
-        raise HTTPException(status_code=400, detail="Invalid user ID")
-    if not ObjectId.is_valid(org_id):
-        raise HTTPException(status_code=400, detail="Invalid organisation ID")
-
-    # A live invite link into a deactivated org, or for a deactivated user, is
-    # an invitation to a dead end — the recipient sets a password and then
-    # cannot sign in.
-    org = await db["organizations"].find_one({"_id": ObjectId(org_id)}, {"is_active": 1})
-    if not org:
-        raise HTTPException(status_code=404, detail="Organisation not found")
-    if not org.get("is_active", True):
-        raise HTTPException(
-            status_code=400,
-            detail="Reactivate the organisation before sharing invite links.",
-        )
-
-    user = await db["users"].find_one({
-        "_id": ObjectId(user_id),
-        "organization_id": ObjectId(org_id),
-    })
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if not user.get("is_active", True):
-        raise HTTPException(
-            status_code=400,
-            detail="Reactivate this user before sharing an invite link.",
-        )
-
-    # Regenerate the token if it's stale
-    from supertokens_python.recipe.emailpassword.asyncio import create_reset_password_token
-    from supertokens_python.recipe.emailpassword.interfaces import CreateResetPasswordOkResult
-
-    token_result = await create_reset_password_token(
-        "public", user["supertokens_user_id"], user["email"]
+    raise HTTPException(
+        status_code=400,
+        detail="Invite links are no longer used. Users sign in with SelfBrief.",
     )
-    if not isinstance(token_result, CreateResetPasswordOkResult):
-        raise HTTPException(status_code=500, detail="Could not generate invite link")
-
-    from config.settings import settings
-    link = (
-        f"{settings.WEBSITE_DOMAIN}/reset-password"
-        f"?token={token_result.token}&rid=emailpassword"
-    )
-    # Persist the fresh link
-    await db["users"].update_one({"_id": user["_id"]}, {"$set": {"invite_link": link}})
-    return {"invite_link": link}
 
 
 @router.patch("/{org_id}/users/{user_id}/role", response_model=UserOut)
@@ -563,7 +431,6 @@ async def deactivate_user(
     if not doc:
         raise HTTPException(status_code=404, detail="User not found in this organisation")
 
-    await revoke_sessions([doc.get("supertokens_user_id")])
     return serialize_user(doc)
 
 
