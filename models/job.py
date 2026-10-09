@@ -80,6 +80,7 @@ class JobSummary(BaseModel):
     airport_name: Optional[str]
     template_name: Optional[str]
     created_by_user_id: str
+    created_by_name: Optional[str]
     created_by_email: Optional[str]
     batch_id: Optional[str]
     created_at: datetime
@@ -197,6 +198,7 @@ def serialize_job_summary(
         airport_name=doc.get("airport_name"),
         template_name=doc.get("template_name"),
         created_by_user_id=creator_key,
+        created_by_name=(creator.get("full_name") or None) if creator else None,
         created_by_email=creator.get("email") if creator else None,
         batch_id=doc.get("batch_id"),
         created_at=doc["created_at"],
