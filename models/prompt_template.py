@@ -26,6 +26,7 @@ class PromptTemplateOut(BaseModel):
     content: str
     is_active: bool
     created_by_user_id: Optional[str]
+    created_by_name: Optional[str]
     created_by_email: Optional[str]
     created_at: datetime
     updated_at: datetime
@@ -54,6 +55,7 @@ def serialize_template(doc: dict, user_map: dict | None = None) -> PromptTemplat
         content=doc["content"],
         is_active=doc.get("is_active", True),
         created_by_user_id=creator_key or None,
+        created_by_name=creator.get("full_name") or None,
         created_by_email=creator.get("email"),
         created_at=doc["created_at"],
         updated_at=doc["updated_at"],
