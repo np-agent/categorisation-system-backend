@@ -14,7 +14,7 @@ A request is authenticated with the CMS access token (`Authorization: Bearer`). 
 
 The browser signs in with Auth.js against the CMS OIDC provider (`categorisation`). The frontend then calls this API with the access token. Before it keeps a session, it calls `GET /api/v1/me`. A 401 or 403 there means the person is not signed in.
 
-There is no local signup, invite, or password reset. The old invite routes return 400.
+There is no local signup, invite, or password reset. People are added in SelfBrief and appear here after they sign in.
 
 People are keyed by `cms_user_id` (the OIDC subject), not by email. Email can change on the CMS side and we overwrite the stored email on the next successful profile load.
 
@@ -77,7 +77,7 @@ Jobs created by a super-admin are stored with `organization_id` of SelfBrief Aer
 
 A row is created on the first successful sign-in. People who have never got in are not listed.
 
-`users.is_active` is what the user list treats as active or inactive. The default UI filter shows active and pending, so an inactive person is hidden until that filter is turned on. Pending is the old invite state. New CMS users are stored as `invite_status: accepted`.
+`users.is_active` is what the user list treats as active or inactive. The list defaults to active people. Inactive people stay hidden until that filter is turned on.
 
 `eula_accepted_version` is a short hash of `legal/eula.txt`. Editing that file makes every user accept again. `GET /api/v1/me` and `POST /api/v1/me/eula` are the only authenticated routes that work before acceptance.
 
@@ -89,4 +89,4 @@ Creating a job stores the request and a worker polls for work (`JOB_POLL_INTERVA
 
 ## Identity we no longer use
 
-Sign-in used to be email and password through SuperTokens. That package, its config, the password-reset mail, and the `supertokens_user_id` field are gone. On startup the API drops the `supertokens_user_id` index if it is still there and unsets the field on existing user documents.
+Sign-in used to be email and password through SuperTokens, including invites and password reset. That package, those routes, and the `supertokens_user_id` and `invite_status` fields are gone. On startup the API drops the old index if it is still there and unsets those fields on existing user documents.

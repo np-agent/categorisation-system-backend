@@ -81,3 +81,7 @@ class Database:
             {"supertokens_user_id": {"$exists": True}},
             {"$unset": {"supertokens_user_id": ""}},
         )
+        await users.update_many(
+            {"invite_status": {"$exists": True}},
+            {"$unset": {"invite_status": ""}},
+        )

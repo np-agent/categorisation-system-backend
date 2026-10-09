@@ -70,17 +70,6 @@ def _email_html(body: str, *, include_logo: bool) -> str:
     """
 
 
-def _cta(href: str, label: str) -> str:
-    """Navy button matching the sister-app .button class."""
-    return (
-        f'<a href="{href}" target="_blank" '
-        'style="background: #152F4D; padding: 10px 15px; color: #fff; text-decoration: none; '
-        'display: inline-block; border-radius: 5px; font-family: Arial, Helvetica, sans-serif; '
-        'font-size: 14px; font-weight: bold;">'
-        f"{label}</a>"
-    )
-
-
 def _p(text: str) -> str:
     return f'<p style="margin: 0 0 16px; line-height: 1.5;">{text}</p>'
 
@@ -111,42 +100,6 @@ def _airport_label(airport_icao: str | None, airport_name: str | None) -> str:
 
 def _job_refs(job_title: str, airport_icao: str | None, airport_name: str | None) -> tuple[str, str]:
     return html.escape(job_title or ""), html.escape(_airport_label(airport_icao, airport_name))
-
-
-def send_invite_email(to_email: str, invite_link: str, org_name: str) -> bool:
-    """
-    Send a branded invite email to a new user.
-    Returns True on success, False on failure (so callers can fall back to copy-link).
-    """
-    if not settings.RESEND_API_KEY:
-        logger.warning("RESEND_API_KEY not set — skipping invite email to %s", to_email)
-        return False
-
-    org = html.escape(org_name)
-    link = html.escape(invite_link)
-    try:
-        _send(
-            to_email=to_email,
-            subject=f"You've been invited to {org_name} on SelfBrief",
-            body=(
-                _p(f"You have been invited to join <b>{org}</b> on SelfBrief.")
-                + _p(
-                    f"A SelfBrief administrator has invited you to join <b>{org}</b>. "
-                    "Click the button below to set your password and access the platform."
-                )
-                + f"<p style=\"margin: 0 0 16px;\">{_cta(invite_link, 'Accept Invite &amp; Set Password')}</p>"
-                + '<p style="border-bottom: 1px solid #e8e8e8; margin: 24px 0;"></p>'
-                + _p(
-                    "This link expires after use. If you were not expecting this invitation, you can ignore this email."
-                )
-                + _p(f"Or copy this URL into your browser:<br>{link}")
-            ),
-        )
-        logger.info("Invite email sent to %s", to_email)
-        return True
-    except Exception as exc:
-        logger.error("Failed to send invite email to %s: %s", to_email, exc)
-        return False
 
 
 def send_job_created_email(
