@@ -4,7 +4,7 @@ from typing import Literal, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from pymongo import ReturnDocument
 
 from api.deps import get_current_db_user
@@ -44,12 +44,6 @@ async def _is_internal_org(db, org_id: ObjectId) -> bool:
 # ---------------------------------------------------------------------------
 # Pydantic request bodies for sub-resources
 # ---------------------------------------------------------------------------
-class InviteUserRequest(BaseModel):
-    email: EmailStr
-    role: Literal["super-admin", "admin", "user"]
-    full_name: Optional[str] = None
-
-
 class UpdateRoleRequest(BaseModel):
     role: Literal["super-admin", "admin", "user"]
 
@@ -362,27 +356,6 @@ async def list_org_users(org_id: str):
         )
     )
     return [serialize_user(d) for d in docs]
-
-
-@router.post("/{org_id}/invite", response_model=UserOut, status_code=201)
-async def invite_user(
-    org_id: str,
-    body: InviteUserRequest,
-    caller: dict = Depends(get_current_db_user),
-):
-    """Users sign in with SelfBrief CMS. Local password invites are disabled."""
-    raise HTTPException(
-        status_code=400,
-        detail="Users sign in with SelfBrief. Add them in CMS rather than inviting them here.",
-    )
-
-
-@router.get("/{org_id}/invite/{user_id}/link")
-async def get_invite_link(org_id: str, user_id: str):
-    raise HTTPException(
-        status_code=400,
-        detail="Invite links are no longer used. Users sign in with SelfBrief.",
-    )
 
 
 @router.patch("/{org_id}/users/{user_id}/role", response_model=UserOut)

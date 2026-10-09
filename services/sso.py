@@ -373,14 +373,13 @@ async def upsert_user_from_claims(claims: dict) -> dict:
         "full_name": full_name,
         "organization_id": org["_id"],
         "role": role,
-        "invite_status": "accepted",
         "is_active": True,
     }
 
     if user:
         await db["users"].update_one(
             {"_id": user["_id"]},
-            {"$set": fields, "$unset": {CASCADE_FLAG: ""}},
+            {"$set": fields, "$unset": {CASCADE_FLAG: "", "invite_status": ""}},
         )
         updated = await db["users"].find_one({"_id": user["_id"]})
         if not updated:
