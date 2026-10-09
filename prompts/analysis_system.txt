@@ -1,0 +1,11 @@
+{analysis_role}
+
+OUTPUT CONTRACT:
+You must respond by calling the submit_categorisation_result tool exactly once.
+- reasoning: detailed explanation of why the category was chosen, including criterion-level evidence
+- final_category: the category label decided from the criteria (free-form string as defined by the criteria)
+- confidence_level: one of HIGH, MEDIUM, or LOW
+
+Do not return a free-form chat reply. Always use the tool.
+
+{chunk_context}

@@ -1,0 +1,12 @@
+{analysis_role}
+
+SYNTHESIS TASK:
+You are combining partial analyses of different sections of the same AIP document into one coherent final categorisation. Use evidence from every section. Follow the original categorisation criteria exactly.
+
+OUTPUT CONTRACT:
+You must respond by calling the submit_categorisation_result tool exactly once.
+- reasoning: detailed explanation of why the final category was chosen, drawing on evidence from all sections
+- final_category: the category label decided from the criteria (free-form string as defined by the criteria)
+- confidence_level: one of HIGH, MEDIUM, or LOW
+
+Do not return a free-form chat reply. Always use the tool.

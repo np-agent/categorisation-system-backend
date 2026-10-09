@@ -1,0 +1,437 @@
+import re
+from datetime import datetime, timezone
+from typing import Literal, Optional
+
+from bson import ObjectId
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from pymongo import ReturnDocument
+
+from api.deps import get_current_db_user
+from config.settings import settings
+from database.session import get_database
+from models.organization import (
+    OrganizationCreate,
+    OrganizationOut,
+    OrganizationUpdate,
+    serialize_organization,
+)
+from models.user import UserOut, serialize_user
+
+router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Helper: derive slug from name
+# ---------------------------------------------------------------------------
+def _slugify(name: str) -> str:
+    slug = name.lower().strip()
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    slug = slug.strip("-")
+    return slug
+
+
+async def _get_internal_org(db) -> Optional[dict]:
+    return await db["organizations"].find_one({"slug": settings.INTERNAL_ORG_SLUG})
+
+
+async def _is_internal_org(db, org_id: ObjectId) -> bool:
+    """True when the org is the internal SelfBrief org (the only one allowed super-admins)."""
+    internal = await _get_internal_org(db)
+    return bool(internal and internal["_id"] == org_id)
+
+
+# ---------------------------------------------------------------------------
+# Pydantic request bodies for sub-resources
+# ---------------------------------------------------------------------------
+class UpdateRoleRequest(BaseModel):
+    role: Literal["super-admin", "admin", "user"]
+
+
+class UpdateTemplatesRequest(BaseModel):
+    template_ids: list[str]
+
+
+async def _assert_role_allowed(db, org_id: ObjectId, role: str) -> None:
+    """
+    Super-admin is a SelfBrief-internal role only. This guard is what stops a
+    customer org user from ever being granted platform-wide access.
+    """
+    if role != "super-admin":
+        return
+    if not await _is_internal_org(db, org_id):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Super-admin can only be granted to "
+                f"{settings.INTERNAL_ORG_NAME} team members."
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Organisation CRUD
+# ---------------------------------------------------------------------------
+
+@router.get("", response_model=list[OrganizationOut])
+async def list_organizations():
+    """
+    Customer organisations. The internal SelfBrief org is excluded — it is
+    managed on its own team screen.
+
+    Ordered active first, then by name, so archived orgs sink to the bottom.
+    """
+    db = await get_database()
+    cursor = db["organizations"].find({"slug": {"$ne": settings.INTERNAL_ORG_SLUG}})
+    docs = await cursor.to_list(length=500)
+    docs.sort(key=lambda d: (0 if d.get("is_active", True) else 1, d["name"].lower()))
+    return [serialize_organization(d) for d in docs]
+
+
+@router.get("/internal", response_model=OrganizationOut)
+async def get_internal_organization():
+    """The internal SelfBrief organisation, used by the SelfBrief Team screen."""
+    db = await get_database()
+    doc = await _get_internal_org(db)
+    if not doc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{settings.INTERNAL_ORG_NAME} organisation not found",
+        )
+    return serialize_organization(doc)
+
+
+@router.get("/{org_id}", response_model=OrganizationOut)
+async def get_organization(org_id: str):
+    db = await get_database()
+    if not ObjectId.is_valid(org_id):
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
+    doc = await db["organizations"].find_one({"_id": ObjectId(org_id)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+    return serialize_organization(doc)
+
+
+@router.post("", response_model=OrganizationOut, status_code=201)
+async def create_organization(
+    data: OrganizationCreate,
+    caller: dict = Depends(get_current_db_user),
+):
+    db = await get_database()
+    slug = data.slug or _slugify(data.name)
+    if slug == settings.INTERNAL_ORG_SLUG:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{slug}' is reserved for the {settings.INTERNAL_ORG_NAME} team.",
+        )
+    existing = await db["organizations"].find_one({"slug": slug})
+    if existing:
+        raise HTTPException(status_code=400, detail="Organisation with this slug already exists")
+
+    now = datetime.now(timezone.utc)
+    doc = {
+        "name": data.name,
+        "slug": slug,
+        "is_active": True,
+        "templates": [],
+        "created_at": now,
+        "created_by_user_id": caller["_id"],
+    }
+    result = await db["organizations"].insert_one(doc)
+    created = await db["organizations"].find_one({"_id": result.inserted_id})
+    return serialize_organization(created)
+
+
+@router.patch("/{org_id}", response_model=OrganizationOut)
+async def update_organization(org_id: str, data: OrganizationUpdate):
+    db = await get_database()
+    if not ObjectId.is_valid(org_id):
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
+
+    updates: dict = {}
+    if data.name is not None:
+        updates["name"] = data.name
+    if data.is_active is not None:
+        updates["is_active"] = data.is_active
+    if data.templates is not None:
+        template_ids = []
+        for tid in data.templates:
+            if not ObjectId.is_valid(tid):
+                raise HTTPException(status_code=400, detail=f"Invalid template ID: {tid}")
+            template_ids.append(ObjectId(tid))
+        updates["templates"] = template_ids
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    doc = await db["organizations"].find_one_and_update(
+        {"_id": ObjectId(org_id)},
+        {"$set": updates},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+    return serialize_organization(doc)
+
+
+# Marks a user who was switched off by the org going inactive, as opposed to
+# being deactivated individually. Reactivating the org restores only these.
+CASCADE_FLAG = "deactivated_by_org"
+
+
+async def _cascade_deactivate_members(db, oid: ObjectId) -> None:
+    """
+    Switch off everyone who is still active in the org and tag them. Users who
+    were already inactive are left untagged, so they stay off when the org
+    comes back.
+    """
+    await db["users"].update_many(
+        {"organization_id": oid, "is_active": {"$ne": False}},
+        {"$set": {"is_active": False, CASCADE_FLAG: True}},
+    )
+
+
+async def _cascade_reactivate_members(db, oid: ObjectId) -> None:
+    """Restore only the users that the org deactivation switched off."""
+    await db["users"].update_many(
+        {"organization_id": oid, CASCADE_FLAG: True},
+        {"$set": {"is_active": True}, "$unset": {CASCADE_FLAG: ""}},
+    )
+
+
+async def _set_org_active(org_id: str, is_active: bool) -> OrganizationOut:
+    db = await get_database()
+    if not ObjectId.is_valid(org_id):
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
+
+    oid = ObjectId(org_id)
+    if not is_active and await _is_internal_org(db, oid):
+        raise HTTPException(
+            status_code=400,
+            detail=f"The {settings.INTERNAL_ORG_NAME} organisation cannot be deactivated",
+        )
+
+    doc = await db["organizations"].find_one_and_update(
+        {"_id": oid},
+        {"$set": {"is_active": is_active}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+
+    if is_active:
+        await _cascade_reactivate_members(db, oid)
+    else:
+        await _cascade_deactivate_members(db, oid)
+
+    return serialize_organization(doc)
+
+
+@router.patch("/{org_id}/deactivate", response_model=OrganizationOut)
+async def deactivate_organization(org_id: str):
+    """
+    Archive an organisation. Every user in it immediately loses access — the
+    session gate in api/deps.py rejects members of an inactive org — while
+    each user's own is_active flag is preserved so reactivating the org
+    restores exactly the previous access.
+    """
+    return await _set_org_active(org_id, False)
+
+
+@router.patch("/{org_id}/reactivate", response_model=OrganizationOut)
+async def reactivate_organization(org_id: str):
+    """Restore an archived organisation and its users' access."""
+    return await _set_org_active(org_id, True)
+
+
+# ---------------------------------------------------------------------------
+# Templates for an org
+# ---------------------------------------------------------------------------
+
+@router.get("/{org_id}/templates/summary")
+async def get_org_templates(org_id: str):
+    """Return the template summaries available to a specific organisation."""
+    db = await get_database()
+    if not ObjectId.is_valid(org_id):
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
+
+    org = await db["organizations"].find_one({"_id": ObjectId(org_id)})
+    if not org:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+
+    template_ids = org.get("templates", [])
+    # SelfBrief is the platform org: it always has every active template, so
+    # team members can create jobs without someone assigning them first.
+    if await _is_internal_org(db, org["_id"]):
+        cursor = db["prompt_templates"].find(
+            {"is_active": True},
+            {"content": 0},
+        ).sort("name", 1)
+        docs = await cursor.to_list(length=200)
+        return [
+            {
+                "id": str(d["_id"]),
+                "name": d["name"],
+                "category": d.get("category"),
+                "description": d.get("description"),
+            }
+            for d in docs
+        ]
+
+    if not template_ids:
+        return []
+
+    cursor = db["prompt_templates"].find(
+        {"_id": {"$in": template_ids}, "is_active": True},
+        {"content": 0},
+    ).sort("name", 1)
+    docs = await cursor.to_list(length=100)
+    return [
+        {
+            "id": str(d["_id"]),
+            "name": d["name"],
+            "category": d.get("category"),
+            "description": d.get("description"),
+        }
+        for d in docs
+    ]
+
+
+@router.put("/{org_id}/templates")
+async def set_org_templates(org_id: str, body: UpdateTemplatesRequest):
+    """Replace the full list of templates assigned to this org. Active templates only."""
+    db = await get_database()
+    if not ObjectId.is_valid(org_id):
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
+
+    template_oids = []
+    for tid in body.template_ids:
+        if not ObjectId.is_valid(tid):
+            raise HTTPException(status_code=400, detail=f"Invalid template ID: {tid}")
+        template_oids.append(ObjectId(tid))
+
+    if template_oids:
+        active_count = await db["prompt_templates"].count_documents({
+            "_id": {"$in": template_oids},
+            "is_active": True,
+        })
+        if active_count != len(template_oids):
+            raise HTTPException(
+                status_code=400,
+                detail="One or more templates are inactive or do not exist",
+            )
+
+    doc = await db["organizations"].find_one_and_update(
+        {"_id": ObjectId(org_id)},
+        {"$set": {"templates": template_oids}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+    return serialize_organization(doc)
+
+
+# ---------------------------------------------------------------------------
+# Users in an org
+# ---------------------------------------------------------------------------
+
+_ROLE_RANK = {"super-admin": 0, "admin": 1, "user": 2}
+
+
+@router.get("/{org_id}/users", response_model=list[UserOut])
+async def list_org_users(org_id: str):
+    """
+    Users in an org, ordered by seniority (super-admin, admin, user) and then
+    name, so the people with elevated access always sit at the top of the list.
+    """
+    db = await get_database()
+    if not ObjectId.is_valid(org_id):
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
+    cursor = db["users"].find({"organization_id": ObjectId(org_id)})
+    docs = await cursor.to_list(length=500)
+    docs.sort(
+        key=lambda d: (
+            _ROLE_RANK.get(d.get("role", "user"), 99),
+            (d.get("full_name") or d.get("email") or "").lower(),
+        )
+    )
+    return [serialize_user(d) for d in docs]
+
+
+@router.patch("/{org_id}/users/{user_id}/role", response_model=UserOut)
+async def update_user_role(org_id: str, user_id: str, body: UpdateRoleRequest):
+    db = await get_database()
+    if not ObjectId.is_valid(user_id):
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+    if not ObjectId.is_valid(org_id):
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
+
+    await _assert_role_allowed(db, ObjectId(org_id), body.role)
+
+    doc = await db["users"].find_one_and_update(
+        {"_id": ObjectId(user_id), "organization_id": ObjectId(org_id)},
+        {"$set": {"role": body.role}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="User not found in this organisation")
+    return serialize_user(doc)
+
+
+@router.patch("/{org_id}/users/{user_id}/deactivate", response_model=UserOut)
+async def deactivate_user(
+    org_id: str,
+    user_id: str,
+    caller: dict = Depends(get_current_db_user),
+):
+    """
+    Deactivate a user — sets is_active to false so they cannot log in.
+    Their account and data are preserved and can be restored via /reactivate.
+    """
+    db = await get_database()
+    if not ObjectId.is_valid(user_id):
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+    if ObjectId(user_id) == caller["_id"]:
+        raise HTTPException(status_code=400, detail="You cannot deactivate your own account")
+
+    # Clearing the cascade tag makes this an explicit individual decision, so
+    # reactivating the organisation later will not bring this user back.
+    doc = await db["users"].find_one_and_update(
+        {"_id": ObjectId(user_id), "organization_id": ObjectId(org_id)},
+        {"$set": {"is_active": False}, "$unset": {CASCADE_FLAG: ""}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="User not found in this organisation")
+
+    return serialize_user(doc)
+
+
+@router.patch("/{org_id}/users/{user_id}/reactivate", response_model=UserOut)
+async def reactivate_user(org_id: str, user_id: str):
+    """
+    Reactivate a previously deactivated user — they can log in again.
+    Refused while the organisation itself is inactive, since the user would
+    still be blocked and the restored flag would be misleading.
+    """
+    db = await get_database()
+    if not ObjectId.is_valid(user_id):
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+    if not ObjectId.is_valid(org_id):
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
+
+    org = await db["organizations"].find_one({"_id": ObjectId(org_id)}, {"is_active": 1})
+    if org and not org.get("is_active", True):
+        raise HTTPException(
+            status_code=400,
+            detail="Reactivate the organisation before restoring individual users.",
+        )
+
+    doc = await db["users"].find_one_and_update(
+        {"_id": ObjectId(user_id), "organization_id": ObjectId(org_id)},
+        {"$set": {"is_active": True}, "$unset": {CASCADE_FLAG: ""}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="User not found in this organisation")
+    return serialize_user(doc)
