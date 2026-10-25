@@ -85,7 +85,7 @@ Job results are advisory. Accepting the notice on a job is stored per user per j
 
 ## Jobs and email
 
-Creating a job stores the request and a worker polls for work (`JOB_POLL_INTERVAL_SECONDS`, at least 15 seconds). Completion and failure emails include the job title and the airport as code and name. They go to the person who created the job.
+Creating a job stores the request. If the airport has an AIP, the job waits in a queue (`pending`) and a worker runs a few jobs at a time (`JOB_MAX_CONCURRENT`, default 2) by calling the model directly. A template is general notes plus categories and questions. Every question is sent together and answered yes, no, or unknown, with one line of evidence, a confidence, and whether a person should check it. A longer AIP is read in parallel pieces and those answers are merged. The first category whose questions are all yes is the result. Completion and failure emails include the job title and the airport as code and name. They go to the person who created the job.
 
 ## Identity we no longer use
 

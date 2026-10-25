@@ -2,17 +2,13 @@
 Shared job submission / completion logic used by API routes and the background poller.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
 from bson import ObjectId
 
-from services.categorisation import (
-    submit_batch_job,
-    fetch_batch_result,
-    merge_chunk_outcomes,
-    run_synthesis,
-)
+from services.categorisation import categorise_document
 from services.email import (
     send_job_created_email,
     send_job_completed_email,
@@ -20,6 +16,13 @@ from services.email import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Set when a job is queued so the worker starts it without waiting for the next sweep.
+job_queued = asyncio.Event()
+
+
+def notify_job_queued() -> None:
+    job_queued.set()
 
 
 async def notify_job(db, job_doc: dict, event: str) -> None:
@@ -51,159 +54,99 @@ async def notify_job(db, job_doc: dict, event: str) -> None:
         logger.error("notify_job error (%s): %s", event, exc)
 
 
-async def submit_and_update_job(db, job_id: ObjectId, airport: dict, template: dict) -> None:
-    """Submit batch to Anthropic and update the job document. Raises on failure."""
-    submission = await submit_batch_job(
-        airport_s3_key=airport["s3_key"],
-        template_content=template["content"],
-        job_id=str(job_id),
-    )
-    await db["jobs"].update_one(
-        {"_id": job_id},
-        {"$set": {
-            "status": "running",
-            "batch_id": submission["batch_id"],
-            "chunk_count": submission["chunk_count"],
-            "chunks": submission["chunks"],
-            "airport_aip_s3_key": airport.get("s3_key"),
-            "submitted_at": datetime.now(timezone.utc),
-            "updated_at": datetime.now(timezone.utc),
-        }},
-    )
+def _is_transient(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(word in text for word in ("busy", "timeout", "timed out", "429", "503", "529"))
 
 
-async def process_running_job(db, doc: dict) -> dict | None:
+async def run_queued_job(db, doc: dict) -> None:
     """
-    Poll Anthropic for one running job and finalize it if the batch has ended.
+    Run one job that has already been claimed (status running).
 
-    Returns:
-        None  — still in progress (or no batch_id / not processable)
-        dict  — updated job document after settling to ended/failed
+    A transport failure on the first attempt puts the job back in the queue.
+    A bad result, or a second failure, marks it failed.
     """
-    if doc.get("status") not in ("running", "pending"):
-        return None
-    if not doc.get("batch_id"):
-        return None
-
     job_id = doc["_id"]
+    now = datetime.now(timezone.utc)
+    attempts = int(doc.get("processing_attempts") or 1)
 
     try:
-        batch_outcome = await fetch_batch_result(doc["batch_id"])
+        template = await db["prompt_templates"].find_one(
+            {"_id": doc["template_id"], "is_active": True}
+        )
+        if not template:
+            raise RuntimeError("Template no longer available")
+        s3_key = doc.get("airport_aip_s3_key")
+        if not s3_key:
+            raise RuntimeError("AIP document is not available for this airport")
+
+        org = None
+        if doc.get("organization_id"):
+            org = await db["organizations"].find_one({"_id": doc["organization_id"]})
+        instructions = (org or {}).get("job_instructions") or ""
+        await db["jobs"].update_one(
+            {"_id": job_id, "status": "running"},
+            {"$set": {
+                "submitted_at": now,
+                "updated_at": now,
+                "organisation_instructions": instructions,
+            }},
+        )
+        outcome = await categorise_document(
+            s3_key,
+            template,
+            str(job_id),
+            organisation_instructions=instructions,
+        )
     except Exception as exc:
-        logger.error("Failed to fetch batch %s for job %s: %s", doc["batch_id"], job_id, exc)
-        return None
-
-    if batch_outcome is None:
-        return None
-
-    now = datetime.now(timezone.utc)
-
-    if batch_outcome.get("batch_error"):
-        final_result = {
-            "raw_text": "",
-            "final_category": None,
-            "confidence_level": None,
-            "error": batch_outcome["batch_error"],
-            "created_at": now,
-        }
-        await db["jobs"].update_one(
-            {"_id": job_id},
-            {"$set": {
-                "status": "failed",
-                "completed_at": now,
-                "updated_at": now,
-                "final_result": final_result,
-            }},
-        )
-        updated = await db["jobs"].find_one({"_id": job_id})
-        await notify_job(db, updated, "failed")
-        return updated
-
-    chunks = merge_chunk_outcomes(
-        doc.get("chunks") or [],
-        batch_outcome.get("chunks") or [],
-    )
-
-    any_failed = any(c.get("status") != "succeeded" for c in chunks)
-    if any_failed:
-        errors = [c.get("error") for c in chunks if c.get("error")]
-        final_result = {
-            "raw_text": "",
-            "final_category": None,
-            "confidence_level": None,
-            "error": "; ".join(errors) if errors else "One or more chunks failed",
-            "created_at": now,
-        }
-        await db["jobs"].update_one(
-            {"_id": job_id},
-            {"$set": {
-                "status": "failed",
-                "completed_at": now,
-                "updated_at": now,
-                "chunks": chunks,
-                "final_result": final_result,
-            }},
-        )
-        updated = await db["jobs"].find_one({"_id": job_id})
-        await notify_job(db, updated, "failed")
-        return updated
-
-    synthesis = None
-    if len(chunks) > 1:
-        template = await db["prompt_templates"].find_one({"_id": doc["template_id"]})
-        template_content = (template or {}).get("content", "")
-        synthesis = await run_synthesis(template_content, chunks)
-        if synthesis.get("error"):
-            final_result = {
-                "raw_text": "",
-                "final_category": None,
-                "confidence_level": None,
-                "error": synthesis["error"],
-                "created_at": now,
-            }
+        logger.error("Job %s failed while running: %s", job_id, exc)
+        if _is_transient(exc) and attempts < 2:
             await db["jobs"].update_one(
-                {"_id": job_id},
-                {"$set": {
-                    "status": "failed",
-                    "completed_at": now,
-                    "updated_at": now,
-                    "chunks": chunks,
-                    "synthesis": synthesis,
-                    "final_result": final_result,
-                }},
+                {"_id": job_id, "status": "running"},
+                {"$set": {"status": "pending", "updated_at": datetime.now(timezone.utc)}},
             )
-            updated = await db["jobs"].find_one({"_id": job_id})
-            await notify_job(db, updated, "failed")
-            return updated
+            notify_job_queued()
+            return
+        await _fail_job(db, job_id, str(exc))
+        return
 
-        final_result = {
-            "raw_text": synthesis.get("raw_response", ""),
-            "final_category": synthesis.get("final_category"),
-            "confidence_level": synthesis.get("confidence_level"),
-            "error": None,
-            "created_at": now,
-        }
-    else:
-        only = chunks[0]
-        final_result = {
-            "raw_text": only.get("raw_text", ""),
-            "final_category": only.get("final_category"),
-            "confidence_level": only.get("confidence_level"),
-            "error": None,
-            "created_at": now,
-        }
-
+    finished = datetime.now(timezone.utc)
+    final_result = outcome["final_result"]
+    final_result["created_at"] = finished
+    failed = bool(final_result.get("error"))
     await db["jobs"].update_one(
         {"_id": job_id},
         {"$set": {
-            "status": "ended",
-            "completed_at": now,
-            "updated_at": now,
-            "chunks": chunks,
-            "synthesis": synthesis,
+            "status": "failed" if failed else "ended",
+            "completed_at": finished,
+            "updated_at": finished,
+            "chunk_count": len(outcome["chunks"]),
+            "chunks": outcome["chunks"],
+            "synthesis": outcome["synthesis"],
             "final_result": final_result,
         }},
     )
     updated = await db["jobs"].find_one({"_id": job_id})
-    await notify_job(db, updated, "ended")
-    return updated
+    await notify_job(db, updated, "failed" if failed else "ended")
+
+
+async def _fail_job(db, job_id, message: str) -> None:
+    now = datetime.now(timezone.utc)
+    await db["jobs"].update_one(
+        {"_id": job_id},
+        {"$set": {
+            "status": "failed",
+            "completed_at": now,
+            "updated_at": now,
+            "final_result": {
+                "raw_text": "",
+                "final_category": None,
+                "confidence_level": None,
+                "error": message[:500],
+                "created_at": now,
+            },
+        }},
+    )
+    updated = await db["jobs"].find_one({"_id": job_id})
+    if updated:
+        await notify_job(db, updated, "failed")

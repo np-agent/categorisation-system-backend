@@ -3,7 +3,7 @@ from typing import Optional, Literal
 from pydantic import BaseModel
 
 
-JobStatus = Literal["pending", "running", "ended", "failed", "awaiting_aip"]
+JobStatus = Literal["pending", "running", "ended", "closed", "failed", "awaiting_aip"]
 ChunkStatus = Literal["succeeded", "errored", "expired", "canceled"]
 
 
@@ -27,11 +27,31 @@ class JobSynthesis(BaseModel):
     error: Optional[str] = None
 
 
+class QuestionAnswer(BaseModel):
+    """One template question and the answer recorded for this job.
+
+    user_answer and user_evidence are reserved for a later manual correction.
+    They are empty until that exists.
+    """
+    category_id: str
+    category_code: str
+    question_id: str
+    question_text: str
+    answer: Optional[Literal["yes", "no", "unknown"]] = None
+    evidence: str = ""
+    confidence_level: Optional[Literal["HIGH", "MEDIUM", "LOW"]] = None
+    needs_manual: bool = False
+    page: Optional[int] = None
+    user_answer: Optional[Literal["yes", "no"]] = None
+    user_evidence: Optional[str] = None
+
+
 class JobFinalResult(BaseModel):
     raw_text: str
     final_category: Optional[str] = None
     confidence_level: Optional[str] = None
     error: Optional[str] = None
+    answers: list[QuestionAnswer] = []
     created_at: datetime
 
 
@@ -39,6 +59,22 @@ class JobCreate(BaseModel):
     title: str
     airport_icao: str
     template_id: str
+
+
+class ReviewAuditEntry(BaseModel):
+    field: Literal["notes", "final_category"]
+    action: Literal["added", "updated"]
+    previous_value: str = ""
+    value: str = ""
+    user_id: str
+    user_name: str = ""
+    at: datetime
+
+
+class JobReviewUpdate(BaseModel):
+    notes: str = ""
+    final_category: str = ""
+    close: bool = False
 
 
 class JobOut(BaseModel):
@@ -52,7 +88,6 @@ class JobOut(BaseModel):
     template_id: str
     template_name: Optional[str]
     status: JobStatus
-    batch_id: Optional[str]
     airport_aip_s3_key: Optional[str]
     aip_unavailable_at: Optional[datetime]
     submitted_at: Optional[datetime]
@@ -61,6 +96,9 @@ class JobOut(BaseModel):
     chunks: list[JobChunk]
     synthesis: Optional[JobSynthesis]
     final_result: Optional[JobFinalResult]
+    reviewed_notes: str = ""
+    reviewed_category: str = ""
+    review_audit: list[ReviewAuditEntry] = []
     advisory_acknowledged: bool = False
     created_at: datetime
     updated_at: datetime
@@ -82,7 +120,7 @@ class JobSummary(BaseModel):
     created_by_user_id: str
     created_by_name: Optional[str]
     created_by_email: Optional[str]
-    batch_id: Optional[str]
+    reviewed_category: str = ""
     created_at: datetime
     updated_at: datetime
 
@@ -113,6 +151,38 @@ def _serialize_synthesis(s: dict | None) -> JobSynthesis | None:
     )
 
 
+def _serialize_answer(raw: dict) -> QuestionAnswer | None:
+    text = (raw.get("question_text") or "").strip()
+    qid = (raw.get("question_id") or "").strip()
+    if not text or not qid:
+        return None
+    answer = raw.get("answer")
+    if answer not in ("yes", "no", "unknown"):
+        answer = None
+    confidence = raw.get("confidence_level")
+    if confidence not in ("HIGH", "MEDIUM", "LOW"):
+        confidence = None
+    user_answer = raw.get("user_answer")
+    if user_answer not in ("yes", "no"):
+        user_answer = None
+    page = raw.get("page")
+    if not isinstance(page, int) or page < 1:
+        page = None
+    return QuestionAnswer(
+        category_id=raw.get("category_id") or "",
+        category_code=raw.get("category_code") or "",
+        question_id=qid,
+        question_text=text,
+        answer=answer,
+        evidence=raw.get("evidence") or "",
+        confidence_level=confidence,
+        needs_manual=bool(raw.get("needs_manual")),
+        page=page,
+        user_answer=user_answer,
+        user_evidence=raw.get("user_evidence") or None,
+    )
+
+
 def _legacy_final_result(doc: dict) -> JobFinalResult | None:
     """Map old `results` array jobs to final_result for backward compatibility."""
     results = doc.get("results") or []
@@ -126,6 +196,28 @@ def _legacy_final_result(doc: dict) -> JobFinalResult | None:
         error=r.get("error"),
         created_at=r.get("created_at") or doc.get("updated_at") or doc["created_at"],
     )
+
+
+def _serialize_review_audit(rows: list | None) -> list[ReviewAuditEntry]:
+    entries = []
+    for raw in rows or []:
+        field = raw.get("field")
+        action = raw.get("action")
+        if field not in ("notes", "final_category") or action not in ("added", "updated"):
+            continue
+        at = raw.get("at")
+        if not isinstance(at, datetime):
+            continue
+        entries.append(ReviewAuditEntry(
+            field=field,
+            action=action,
+            previous_value=raw.get("previous_value") or "",
+            value=raw.get("value") or "",
+            user_id=str(raw.get("user_id") or ""),
+            user_name=raw.get("user_name") or "",
+            at=at,
+        ))
+    return entries
 
 
 def caller_acknowledged_job(caller: dict | None, job_id: str) -> bool:
@@ -142,11 +234,17 @@ def serialize_job(doc: dict, caller: dict | None = None) -> JobOut:
     final = None
     if doc.get("final_result"):
         fr = doc["final_result"]
+        answers = [
+            item
+            for item in (_serialize_answer(row) for row in fr.get("answers") or [])
+            if item is not None
+        ]
         final = JobFinalResult(
             raw_text=fr.get("raw_text", ""),
             final_category=fr.get("final_category"),
             confidence_level=fr.get("confidence_level"),
             error=fr.get("error"),
+            answers=answers,
             created_at=fr.get("created_at") or doc.get("updated_at") or doc["created_at"],
         )
     else:
@@ -165,7 +263,6 @@ def serialize_job(doc: dict, caller: dict | None = None) -> JobOut:
         template_id=str(doc["template_id"]),
         template_name=doc.get("template_name"),
         status=doc["status"],
-        batch_id=doc.get("batch_id"),
         airport_aip_s3_key=doc.get("airport_aip_s3_key"),
         aip_unavailable_at=doc.get("aip_unavailable_at"),
         submitted_at=doc.get("submitted_at"),
@@ -174,6 +271,9 @@ def serialize_job(doc: dict, caller: dict | None = None) -> JobOut:
         chunks=chunks,
         synthesis=_serialize_synthesis(doc.get("synthesis")),
         final_result=final,
+        reviewed_notes=doc.get("reviewed_notes") or "",
+        reviewed_category=doc.get("reviewed_category") or "",
+        review_audit=_serialize_review_audit(doc.get("review_audit")),
         advisory_acknowledged=caller_acknowledged_job(caller, str(doc["_id"])),
         created_at=doc["created_at"],
         updated_at=doc["updated_at"],
@@ -200,7 +300,7 @@ def serialize_job_summary(
         created_by_user_id=creator_key,
         created_by_name=(creator.get("full_name") or None) if creator else None,
         created_by_email=creator.get("email") if creator else None,
-        batch_id=doc.get("batch_id"),
+        reviewed_category=doc.get("reviewed_category") or "",
         created_at=doc["created_at"],
         updated_at=doc["updated_at"],
     )

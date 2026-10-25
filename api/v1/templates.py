@@ -12,6 +12,7 @@ from models.prompt_template import (
     PromptTemplateOut,
     PromptTemplateSummary,
     PromptTemplateUpdate,
+    normalise_template_structure,
     serialize_template,
     serialize_template_summary,
 )
@@ -91,10 +92,26 @@ async def create_template(
     data: PromptTemplateCreate,
     caller: dict = Depends(get_current_db_user),
 ):
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Template name is required")
+    try:
+        structured = normalise_template_structure(
+            data.notes,
+            [item.model_dump() for item in data.categories],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     db = await get_database()
     now = datetime.now(timezone.utc)
     doc = {
-        **data.model_dump(),
+        "name": name,
+        "category": data.category,
+        "description": (data.description or "").strip() or None,
+        "notes": structured["notes"],
+        "categories": structured["categories"],
+        "content": structured["content"],
         "is_active": True,
         "created_by_user_id": caller["_id"],
         "created_at": now,
@@ -117,12 +134,37 @@ async def update_template(
     if not ObjectId.is_valid(template_id):
         raise HTTPException(status_code=400, detail="Invalid template ID")
 
-    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    updates = data.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
-    updates["updated_at"] = datetime.now(timezone.utc)
+    if "name" in updates:
+        updates["name"] = (updates["name"] or "").strip()
+        if not updates["name"]:
+            raise HTTPException(status_code=400, detail="Template name is required")
 
     template_oid = ObjectId(template_id)
+    existing = await db["prompt_templates"].find_one({"_id": template_oid})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    if "categories" in updates or "notes" in updates:
+        notes = updates["notes"] if "notes" in updates else existing.get("notes") or ""
+        if "categories" in updates:
+            raw_categories = updates["categories"] or []
+        else:
+            raw_categories = existing.get("categories") or []
+        if raw_categories:
+            try:
+                structured = normalise_template_structure(notes, raw_categories)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            updates["notes"] = structured["notes"]
+            updates["categories"] = structured["categories"]
+            updates["content"] = structured["content"]
+        elif "notes" in updates:
+            updates["notes"] = (notes or "").strip()
+
+    updates["updated_at"] = datetime.now(timezone.utc)
     doc = await db["prompt_templates"].find_one_and_update(
         {"_id": template_oid},
         {"$set": updates},

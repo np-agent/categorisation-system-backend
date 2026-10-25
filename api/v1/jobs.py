@@ -9,16 +9,13 @@ from database.session import get_database
 from models.job import (
     JobCreate,
     JobOut,
+    JobReviewUpdate,
     JobSummary,
     caller_acknowledged_job,
     serialize_job,
     serialize_job_summary,
 )
-from services.job_processor import (
-    notify_job,
-    submit_and_update_job,
-    process_running_job,
-)
+from services.job_processor import notify_job, notify_job_queued
 
 router = APIRouter()
 
@@ -96,11 +93,11 @@ async def create_job(
     """
     Create a new categorisation job for the authenticated user's organisation.
 
-    If the airport has aip_available=True, the job is submitted to the Anthropic
-    batch API immediately and status is set to "running".
+    If the airport has an AIP, the job waits in the queue and a worker runs it.
+    Status stays "pending" until a worker claims it, then "running".
 
-    If aip_available=False, the job is created with status "awaiting_aip" and
-    nothing is sent to Anthropic until a super-admin triggers it after AIP upload.
+    If the AIP is missing, the job is created with status "awaiting_aip" and
+    nothing is sent until a super-admin triggers it after the AIP is uploaded.
     """
     db = await get_database()
 
@@ -126,7 +123,6 @@ async def create_job(
         "template_id": template["_id"],
         "template_name": template["name"],
         "status": "pending",
-        "batch_id": None,
         "airport_aip_s3_key": airport.get("s3_key"),
         "submitted_at": None,
         "completed_at": None,
@@ -138,39 +134,15 @@ async def create_job(
         "updated_at": now,
     }
 
-    if not airport.get("aip_available"):
+    if not airport.get("aip_available") or not airport.get("s3_key"):
         job_doc["status"] = "awaiting_aip"
         job_doc["aip_unavailable_at"] = now
-        result = await db["jobs"].insert_one(job_doc)
-        created = await db["jobs"].find_one({"_id": result.inserted_id})
-        await notify_job(db, created, "created")
-        return serialize_job(created, caller)
 
     result = await db["jobs"].insert_one(job_doc)
-    job_id = result.inserted_id
-
-    try:
-        await submit_and_update_job(db, job_id, airport, template)
-    except Exception as e:
-        now_fail = datetime.now(timezone.utc)
-        await db["jobs"].update_one(
-            {"_id": job_id},
-            {"$set": {
-                "status": "failed",
-                "updated_at": now_fail,
-                "completed_at": now_fail,
-                "final_result": {
-                    "raw_text": "",
-                    "final_category": None,
-                    "confidence_level": None,
-                    "error": str(e),
-                    "created_at": now_fail,
-                },
-            }},
-        )
-
-    created = await db["jobs"].find_one({"_id": job_id})
+    created = await db["jobs"].find_one({"_id": result.inserted_id})
     await notify_job(db, created, "created")
+    if created.get("status") == "pending":
+        notify_job_queued()
     return serialize_job(created, caller)
 
 
@@ -179,21 +151,10 @@ async def check_job_status(
     job_id: str,
     caller: dict = Depends(get_current_db_user),
 ):
-    """
-    Optional manual poll endpoint. The background poller handles this in normal use.
-    Kept for debugging / ops.
-    """
+    """Return the job as stored. The worker updates status; this does not call the model."""
     db = await get_database()
     doc = await _load_visible_job(db, job_id, caller)
-
-    if doc["status"] not in ("running", "pending"):
-        return serialize_job(doc, caller)
-
-    if not doc.get("batch_id"):
-        raise HTTPException(status_code=400, detail="Job has no batch ID to poll")
-
-    updated = await process_running_job(db, doc)
-    return serialize_job(updated or doc, caller)
+    return serialize_job(doc, caller)
 
 
 @router.post("/{job_id}/trigger", response_model=JobOut)
@@ -202,8 +163,8 @@ async def trigger_job(
     caller: dict = Depends(get_current_db_user),
 ):
     """
-    Super-admin only: submit an awaiting_aip job once the AIP has been uploaded.
-    Same job ID — status moves to running.
+    Super-admin only: queue an awaiting_aip job once the AIP has been uploaded.
+    Same job ID. Status moves to pending until a worker claims it.
     """
     if caller.get("role") != "super-admin":
         raise HTTPException(status_code=403, detail="Only super-admins can trigger jobs")
@@ -222,7 +183,7 @@ async def trigger_job(
         )
 
     airport = await db["airports"].find_one({"icao_code": doc["airport_icao"]})
-    if not airport or not airport.get("aip_available"):
+    if not airport or not airport.get("aip_available") or not airport.get("s3_key"):
         raise HTTPException(
             status_code=400,
             detail="AIP document still not available for this airport",
@@ -234,16 +195,22 @@ async def trigger_job(
     if not template:
         raise HTTPException(status_code=404, detail="Template no longer available")
 
-    try:
-        await submit_and_update_job(db, ObjectId(job_id), airport, template)
-        await db["jobs"].update_one(
-            {"_id": ObjectId(job_id)},
-            {"$unset": {"aip_unavailable_at": ""}},
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to submit batch job: {e}")
-
-    updated = await db["jobs"].find_one({"_id": ObjectId(job_id)})
+    now = datetime.now(timezone.utc)
+    updated = await db["jobs"].find_one_and_update(
+        {"_id": ObjectId(job_id), "status": "awaiting_aip"},
+        {
+            "$set": {
+                "status": "pending",
+                "airport_aip_s3_key": airport["s3_key"],
+                "updated_at": now,
+            },
+            "$unset": {"aip_unavailable_at": ""},
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        raise HTTPException(status_code=400, detail="Job cannot be triggered")
+    notify_job_queued()
     return serialize_job(updated, caller)
 
 
@@ -275,6 +242,75 @@ async def acknowledge_job_advisory(
         ) or caller
 
     return serialize_job(doc, caller)
+
+
+@router.patch("/{job_id}/review", response_model=JobOut)
+async def save_job_review(
+    job_id: str,
+    data: JobReviewUpdate,
+    caller: dict = Depends(get_current_db_user),
+):
+    """
+    Save the reviewer's notes and final category.
+
+    The first non-empty value is recorded as added. A later change is recorded
+    as updated. Each change is appended to review_audit. An unchanged value
+    does not add another audit row. Closing an ended job sets its status to
+    closed and requires a final category.
+    """
+    db = await get_database()
+    doc = await _load_visible_job(db, job_id, caller)
+    if doc.get("status") not in ("ended", "closed") or not doc.get("final_result") or doc["final_result"].get("error"):
+        raise HTTPException(status_code=400, detail="This job has no result to review")
+
+    notes = data.notes.strip()
+    category = data.final_category.strip()
+    if len(notes) > 4000:
+        raise HTTPException(status_code=400, detail="Notes are too long")
+    if len(category) > 200:
+        raise HTTPException(status_code=400, detail="Final category is too long")
+
+    previous_notes = doc.get("reviewed_notes") or ""
+    previous_category = doc.get("reviewed_category") or ""
+    closing = bool(data.close) and doc.get("status") == "ended"
+    if closing and not category:
+        raise HTTPException(status_code=400, detail="Enter a final category before closing the job.")
+    if notes == previous_notes and category == previous_category and not closing:
+        return serialize_job(doc, caller)
+
+    now = datetime.now(timezone.utc)
+    user_name = (caller.get("full_name") or caller.get("email") or "").strip()
+    audit = []
+    for field, previous, value in (
+        ("notes", previous_notes, notes),
+        ("final_category", previous_category, category),
+    ):
+        if previous == value:
+            continue
+        audit.append({
+            "field": field,
+            "action": "added" if not previous and value else "updated",
+            "previous_value": previous,
+            "value": value,
+            "user_id": str(caller["_id"]),
+            "user_name": user_name,
+            "at": now,
+        })
+
+    updated = await db["jobs"].find_one_and_update(
+        {"_id": doc["_id"]},
+        {
+            "$set": {
+                "reviewed_notes": notes,
+                "reviewed_category": category,
+                "updated_at": now,
+                **({"status": "closed"} if closing else {}),
+            },
+            **({"$push": {"review_audit": {"$each": audit}}} if audit else {}),
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+    return serialize_job(updated, caller)
 
 
 @router.delete("/{job_id}", status_code=204)

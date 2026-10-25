@@ -35,6 +35,7 @@ class OrganizationOut(BaseModel):
     slug: str
     is_active: bool
     templates: list[str]
+    job_instructions: str = ""
     created_at: datetime
 
     class Config:
@@ -48,5 +49,6 @@ def serialize_organization(doc: dict) -> OrganizationOut:
         slug=doc["slug"],
         is_active=doc.get("is_active", True),
         templates=[str(t) for t in doc.get("templates", [])],
+        job_instructions=doc.get("job_instructions") or "",
         created_at=doc["created_at"],
     )
