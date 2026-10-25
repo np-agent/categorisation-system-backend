@@ -23,12 +23,15 @@ class Settings(BaseSettings):
 
     # Anthropic
     ANTHROPIC_API_KEY: str | None = None
-    ANTHROPIC_MODEL: str = "claude-sonnet-4-5"
+    # Opus 4.6. Leave thinking off so temperature 0 and a forced form both stay valid.
+    ANTHROPIC_MODEL: str = "claude-opus-4-6"
     ANTHROPIC_MAX_TOKENS: int = 16000
     ANTHROPIC_TEMPERATURE: float = 0.2
 
-    # Background job poller (seconds between sweeps of running jobs)
+    # How often the worker looks for queued jobs.
     JOB_POLL_INTERVAL_SECONDS: int = 60
+    # Direct model calls. More than this many jobs run at once, the rest wait.
+    JOB_MAX_CONCURRENT: int = 2
 
     # Resend email delivery
     RESEND_API_KEY: str | None = None

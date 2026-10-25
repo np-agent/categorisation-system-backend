@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
@@ -20,6 +22,7 @@ class Database:
         cls.client = AsyncIOMotorClient(
             settings.MONGO_URI,
             serverSelectionTimeoutMS=5000,
+            tz_aware=True,
         )
         cls.db = cls.client[settings.MONGO_DB_NAME]
         print("Successfully connected to MongoDB")
@@ -62,9 +65,9 @@ class Database:
         ])
 
         # jobs
+        await cls._drop_batch_fields(db["jobs"])
         await db["jobs"].create_indexes([
             IndexModel([("organization_id", ASCENDING), ("created_at", DESCENDING)]),
-            IndexModel([("batch_id", ASCENDING)], sparse=True),
             IndexModel([("status", ASCENDING)]),
             IndexModel([("created_by_user_id", ASCENDING)]),
         ])
@@ -84,4 +87,28 @@ class Database:
         await users.update_many(
             {"invite_status": {"$exists": True}},
             {"$unset": {"invite_status": ""}},
+        )
+
+    @classmethod
+    async def _drop_batch_fields(cls, jobs) -> None:
+        """
+        Drop the Anthropic batch id and its index.
+
+        A job still marked running because it was waiting on that queue is
+        put back to pending so the direct-call worker can run it.
+        """
+        info = await jobs.index_information()
+        if "batch_id_1" in info:
+            await jobs.drop_index("batch_id_1")
+        now = datetime.now(timezone.utc)
+        await jobs.update_many(
+            {
+                "status": "running",
+                "batch_id": {"$exists": True, "$nin": [None, ""]},
+            },
+            {"$set": {"status": "pending", "updated_at": now}},
+        )
+        await jobs.update_many(
+            {"batch_id": {"$exists": True}},
+            {"$unset": {"batch_id": ""}},
         )

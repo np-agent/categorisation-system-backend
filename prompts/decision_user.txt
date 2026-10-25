@@ -1,0 +1,8 @@
+Categorisation criteria:
+---
+{template_content}
+---
+
+{evidence_block}
+Call submit_categorisation_result with one category.
+{retry_note}

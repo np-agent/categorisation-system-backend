@@ -52,6 +52,10 @@ class UpdateTemplatesRequest(BaseModel):
     template_ids: list[str]
 
 
+class UpdateJobInstructionsRequest(BaseModel):
+    instructions: str = ""
+
+
 async def _assert_role_allowed(db, org_id: ObjectId, role: str) -> None:
     """
     Super-admin is a SelfBrief-internal role only. This guard is what stops a
@@ -172,6 +176,58 @@ async def update_organization(org_id: str, data: OrganizationUpdate):
     if not doc:
         raise HTTPException(status_code=404, detail="Organisation not found")
     return serialize_organization(doc)
+
+
+@router.patch("/{org_id}/instructions", response_model=OrganizationOut)
+async def update_job_instructions(
+    org_id: str,
+    data: UpdateJobInstructionsRequest,
+    caller: dict = Depends(get_current_db_user),
+):
+    """
+    Save the instructions sent with every categorisation for this organisation.
+
+    The current text is replaced. Each change is appended to
+    job_instructions_audit, which keeps the older text.
+    """
+    if caller.get("role") != "super-admin":
+        raise HTTPException(status_code=403, detail="Only super-admins can change these instructions")
+    db = await get_database()
+    if not ObjectId.is_valid(org_id):
+        raise HTTPException(status_code=400, detail="Invalid organisation ID")
+
+    instructions = data.instructions.strip()
+    if len(instructions) > 8000:
+        raise HTTPException(status_code=400, detail="Instructions are too long")
+
+    doc = await db["organizations"].find_one({"_id": ObjectId(org_id)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+
+    previous = doc.get("job_instructions") or ""
+    if instructions == previous:
+        return serialize_organization(doc)
+
+    now = datetime.now(timezone.utc)
+    user_name = (caller.get("full_name") or caller.get("email") or "").strip()
+    updated = await db["organizations"].find_one_and_update(
+        {"_id": doc["_id"]},
+        {
+            "$set": {"job_instructions": instructions},
+            "$push": {
+                "job_instructions_audit": {
+                    "action": "added" if not previous and instructions else "updated",
+                    "previous_value": previous,
+                    "value": instructions,
+                    "user_id": str(caller["_id"]),
+                    "user_name": user_name,
+                    "at": now,
+                }
+            },
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+    return serialize_organization(updated)
 
 
 # Marks a user who was switched off by the org going inactive, as opposed to
