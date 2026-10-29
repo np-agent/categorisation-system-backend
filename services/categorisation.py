@@ -406,24 +406,52 @@ def _record_answer(row: dict, found: dict | None) -> dict:
     return record
 
 
-def _choose_category(template: dict, by_id: dict[str, dict]) -> tuple[str | None, str | None]:
-    for cat in template.get("categories") or []:
-        questions = cat.get("questions") or []
-        if not questions:
+def _effective_answer(record: dict) -> tuple[str | None, bool]:
+    """A person's yes or no replaces the model. Otherwise the model answer stands."""
+    user = record.get("user_answer")
+    if user in ("yes", "no"):
+        return user, False
+    answer = record.get("answer")
+    if answer not in ("yes", "no", "unknown"):
+        answer = None
+    return answer, bool(record.get("needs_manual"))
+
+
+def choose_category_from_answers(answers: list[dict]) -> tuple[str | None, str | None]:
+    """First category whose questions are all yes, in the order the answers are stored."""
+    groups: list[tuple[str, list[dict]]] = []
+    for row in answers:
+        code = row.get("category_code") or ""
+        if not groups or groups[-1][0] != code:
+            groups.append((code, []))
+        groups[-1][1].append(row)
+    for code, rows in groups:
+        if not code or not rows:
             continue
         met = True
         levels = []
-        for question in questions:
-            record = by_id.get(question.get("id"))
-            if not record or record["answer"] != "yes" or record["needs_manual"]:
+        for row in rows:
+            answer, needs_manual = _effective_answer(row)
+            if answer != "yes" or needs_manual:
                 met = False
                 break
-            levels.append(record["confidence_level"])
+            level = row.get("confidence_level")
+            if level in _CONF_RANK:
+                levels.append(level)
         if met:
-            known = [level for level in levels if level in _CONF_RANK]
-            confidence = min(known, key=lambda level: _CONF_RANK[level]) if known else None
-            return cat.get("code"), confidence
+            confidence = min(levels, key=lambda level: _CONF_RANK[level]) if levels else None
+            return code, confidence
     return None, None
+
+
+def _choose_category(template: dict, by_id: dict[str, dict]) -> tuple[str | None, str | None]:
+    ordered = []
+    for cat in template.get("categories") or []:
+        for question in cat.get("questions") or []:
+            record = by_id.get(question.get("id"))
+            if record:
+                ordered.append(record)
+    return choose_category_from_answers(ordered)
 
 
 def _result_text(category: str | None, confidence: str | None, answers: list[dict]) -> str:
@@ -436,15 +464,19 @@ def _result_text(category: str | None, confidence: str | None, answers: list[dic
             current = row["category_code"]
             lines.append("")
             lines.append(current)
-        bits = [row["answer"] or "unknown"]
-        if row.get("confidence_level"):
+        shown, needs_manual = _effective_answer(row)
+        bits = [shown or "unknown"]
+        if row.get("user_answer"):
+            bits.append("entered by a person")
+        elif row.get("confidence_level"):
             bits.append(row["confidence_level"].lower())
         if row.get("page"):
             bits.append(f"page {row['page']}")
-        if row.get("needs_manual"):
+        if needs_manual:
             bits.append("needs a person")
+        evidence = (row.get("user_evidence") or row.get("evidence") or "").strip()
         lines.append(f"- {row['question_text']}")
-        lines.append(f"  {', '.join(bits)}. {row.get('evidence') or ''}".rstrip())
+        lines.append(f"  {', '.join(bits)}. {evidence}".rstrip())
     return "\n".join(lines).strip()
 
 

@@ -12,6 +12,7 @@ from pymongo import ReturnDocument
 
 from config.settings import settings
 from database.session import get_database
+from models.job import result_audit_entry
 from services.job_processor import job_queued, run_queued_job
 
 logger = logging.getLogger(__name__)
@@ -44,9 +45,18 @@ async def _recover_stale(db) -> None:
                         "final_category": None,
                         "confidence_level": None,
                         "error": "The job was interrupted and did not finish on a second attempt",
+                        "answers": [],
                         "created_at": now,
                     },
-                }},
+                },
+                "$push": {"result_audit": result_audit_entry({
+                    "raw_text": "",
+                    "final_category": None,
+                    "confidence_level": None,
+                    "error": "The job was interrupted and did not finish on a second attempt",
+                    "answers": [],
+                    "created_at": now,
+                }, saved_at=now)}},
             )
             continue
         await db["jobs"].update_one(

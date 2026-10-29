@@ -11,10 +11,13 @@ from models.job import (
     JobOut,
     JobReviewUpdate,
     JobSummary,
+    ManualAnswersUpdate,
+    result_audit_entry,
     caller_acknowledged_job,
     serialize_job,
     serialize_job_summary,
 )
+from services.categorisation import _result_text, choose_category_from_answers
 from services.job_processor import notify_job, notify_job_queued
 
 router = APIRouter()
@@ -307,6 +310,96 @@ async def save_job_review(
                 **({"status": "closed"} if closing else {}),
             },
             **({"$push": {"review_audit": {"$each": audit}}} if audit else {}),
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+    return serialize_job(updated, caller)
+
+
+def _user_answer_state(answers: list[dict]) -> list[tuple]:
+    return [
+        (
+            row.get("question_id"),
+            row.get("user_answer"),
+            (row.get("user_evidence") or "").strip(),
+        )
+        for row in answers
+    ]
+
+
+@router.patch("/{job_id}/answers", response_model=JobOut)
+async def recheck_answers(
+    job_id: str,
+    data: ManualAnswersUpdate,
+    caller: dict = Depends(get_current_db_user),
+):
+    """
+    Store a person's yes or no beside the model's answer and pick the category again.
+
+    The model's answer is left as it was. The previous full result is kept on
+    result_audit, then the new result is appended.
+    """
+    db = await get_database()
+    doc = await _load_visible_job(db, job_id, caller)
+    final = doc.get("final_result") or {}
+    if doc.get("status") not in ("ended", "closed") or not final or final.get("error"):
+        raise HTTPException(status_code=400, detail="This job has no result to re-check")
+    if not final.get("answers"):
+        raise HTTPException(status_code=400, detail="This job has no questions to re-check")
+
+    known = {row.get("question_id") for row in final["answers"]}
+    incoming = {}
+    for item in data.answers:
+        qid = item.question_id.strip()
+        if qid not in known:
+            raise HTTPException(status_code=400, detail="That question is not on this job")
+        evidence = item.user_evidence.strip()
+        if len(evidence) > 500:
+            raise HTTPException(status_code=400, detail="The answer note is too long")
+        if evidence and item.user_answer not in ("yes", "no"):
+            raise HTTPException(status_code=400, detail="Choose yes or no for that question")
+        incoming[qid] = (item.user_answer, evidence if item.user_answer else "")
+
+    answers = []
+    for row in final["answers"]:
+        copied = dict(row)
+        if copied.get("question_id") in incoming:
+            user_answer, evidence = incoming[copied["question_id"]]
+            copied["user_answer"] = user_answer
+            copied["user_evidence"] = evidence or None
+        answers.append(copied)
+
+    if _user_answer_state(answers) == _user_answer_state(final["answers"]):
+        return serialize_job(doc, caller)
+
+    category, confidence = choose_category_from_answers(answers)
+    now = datetime.now(timezone.utc)
+    updated_result = {
+        "raw_text": _result_text(category, confidence, answers),
+        "final_category": category,
+        "confidence_level": confidence,
+        "error": None,
+        "answers": answers,
+        "created_at": final.get("created_at") or doc.get("completed_at") or now,
+    }
+    user_name = (caller.get("full_name") or caller.get("email") or "").strip()
+    audit = []
+    if not doc.get("result_audit"):
+        audit.append(result_audit_entry(
+            final,
+            saved_at=final.get("created_at") or doc.get("completed_at") or now,
+        ))
+    audit.append(result_audit_entry(
+        updated_result,
+        user_id=str(caller["_id"]),
+        user_name=user_name,
+        saved_at=now,
+    ))
+    updated = await db["jobs"].find_one_and_update(
+        {"_id": doc["_id"]},
+        {
+            "$set": {"final_result": updated_result, "updated_at": now},
+            "$push": {"result_audit": {"$each": audit}},
         },
         return_document=ReturnDocument.AFTER,
     )
