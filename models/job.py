@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Literal
 from pydantic import BaseModel
 
@@ -55,6 +55,29 @@ class JobFinalResult(BaseModel):
     created_at: datetime
 
 
+class ResultAuditEntry(BaseModel):
+    """One full copy of the result, kept when the model finishes or a person re-checks."""
+    saved_by_user_id: str = ""
+    saved_by_name: str = ""
+    saved_at: datetime
+    raw_text: str = ""
+    final_category: Optional[str] = None
+    confidence_level: Optional[str] = None
+    error: Optional[str] = None
+    answers: list[QuestionAnswer] = []
+    created_at: datetime
+
+
+class ManualAnswerIn(BaseModel):
+    question_id: str
+    user_answer: Optional[Literal["yes", "no"]] = None
+    user_evidence: str = ""
+
+
+class ManualAnswersUpdate(BaseModel):
+    answers: list[ManualAnswerIn] = []
+
+
 class JobCreate(BaseModel):
     title: str
     airport_icao: str
@@ -96,6 +119,7 @@ class JobOut(BaseModel):
     chunks: list[JobChunk]
     synthesis: Optional[JobSynthesis]
     final_result: Optional[JobFinalResult]
+    result_audit: list[ResultAuditEntry] = []
     reviewed_notes: str = ""
     reviewed_category: str = ""
     review_audit: list[ReviewAuditEntry] = []
@@ -198,6 +222,53 @@ def _legacy_final_result(doc: dict) -> JobFinalResult | None:
     )
 
 
+def result_audit_entry(
+    final: dict,
+    *,
+    user_id: str = "",
+    user_name: str = "",
+    saved_at: datetime | None = None,
+) -> dict:
+    when = saved_at or final.get("created_at") or datetime.now(timezone.utc)
+    return {
+        "saved_by_user_id": user_id,
+        "saved_by_name": user_name,
+        "saved_at": when,
+        "raw_text": final.get("raw_text") or "",
+        "final_category": final.get("final_category"),
+        "confidence_level": final.get("confidence_level"),
+        "error": final.get("error"),
+        "answers": final.get("answers") or [],
+        "created_at": final.get("created_at") or when,
+    }
+
+
+def _serialize_result_audit(rows: list | None) -> list[ResultAuditEntry]:
+    entries = []
+    for raw in rows or []:
+        saved_at = raw.get("saved_at")
+        created_at = raw.get("created_at") or saved_at
+        if not isinstance(saved_at, datetime) or not isinstance(created_at, datetime):
+            continue
+        answers = [
+            item
+            for item in (_serialize_answer(row) for row in raw.get("answers") or [])
+            if item is not None
+        ]
+        entries.append(ResultAuditEntry(
+            saved_by_user_id=str(raw.get("saved_by_user_id") or ""),
+            saved_by_name=raw.get("saved_by_name") or "",
+            saved_at=saved_at,
+            raw_text=raw.get("raw_text") or "",
+            final_category=raw.get("final_category"),
+            confidence_level=raw.get("confidence_level"),
+            error=raw.get("error"),
+            answers=answers,
+            created_at=created_at,
+        ))
+    return entries
+
+
 def _serialize_review_audit(rows: list | None) -> list[ReviewAuditEntry]:
     entries = []
     for raw in rows or []:
@@ -271,6 +342,7 @@ def serialize_job(doc: dict, caller: dict | None = None) -> JobOut:
         chunks=chunks,
         synthesis=_serialize_synthesis(doc.get("synthesis")),
         final_result=final,
+        result_audit=_serialize_result_audit(doc.get("result_audit")),
         reviewed_notes=doc.get("reviewed_notes") or "",
         reviewed_category=doc.get("reviewed_category") or "",
         review_audit=_serialize_review_audit(doc.get("review_audit")),

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from bson import ObjectId
 
+from models.job import result_audit_entry
 from services.categorisation import categorise_document
 from services.email import (
     send_job_created_email,
@@ -124,7 +125,8 @@ async def run_queued_job(db, doc: dict) -> None:
             "chunks": outcome["chunks"],
             "synthesis": outcome["synthesis"],
             "final_result": final_result,
-        }},
+        },
+        "$push": {"result_audit": result_audit_entry(final_result, saved_at=finished)}},
     )
     updated = await db["jobs"].find_one({"_id": job_id})
     await notify_job(db, updated, "failed" if failed else "ended")
@@ -143,9 +145,18 @@ async def _fail_job(db, job_id, message: str) -> None:
                 "final_category": None,
                 "confidence_level": None,
                 "error": message[:500],
+                "answers": [],
                 "created_at": now,
             },
-        }},
+        },
+        "$push": {"result_audit": result_audit_entry({
+            "raw_text": "",
+            "final_category": None,
+            "confidence_level": None,
+            "error": message[:500],
+            "answers": [],
+            "created_at": now,
+        }, saved_at=now)}},
     )
     updated = await db["jobs"].find_one({"_id": job_id})
     if updated:
