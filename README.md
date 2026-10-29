@@ -1,88 +1,43 @@
 # Categorisation System Backend
 
-A simple FastAPI backend using MongoDB for data storage and SuperTokens for authentication.
+FastAPI and MongoDB API for Airport Categorisation. People sign in with SelfBrief CMS. This service does not store passwords.
 
-## Tech Stack
+Behaviour, auth cases, and the data we do and do not update are in [docs/SYSTEM.md](docs/SYSTEM.md).
 
-- **[FastAPI](https://fastapi.tiangolo.com/)** — web framework
-- **[MongoDB](https://www.mongodb.com/)** (via [Motor](https://motor.readthedocs.io/)) — database
-- **[SuperTokens](https://supertokens.com/)** — authentication / session management
-- **[slowapi](https://github.com/laurentS/slowapi)** — rate limiting
-- **Docker** — containerization
-- **GitHub Actions** — CI/CD to AWS ECS
+## Local setup
 
-## Project Structure
-
-```
-backend/
-├── api/
-│   ├── health.py          # health check endpoint
-│   └── v1/
-│       └── users.py       # test users endpoints (Mongo + SuperTokens)
-├── config/
-│   ├── settings.py        # environment variables / app settings
-│   ├── cors.py            # CORS origin config
-│   ├── limiter.py         # rate limiter instance
-│   └── supertoken_config.py # SuperTokens init
-├── database/
-│   ├── database.py        # Mongo client/connection
-│   └── session.py         # connect/close/get_database helpers
-├── middleware/
-│   ├── rate_limit.py       # tags each request with a user_id/IP for rate limiting
-│   └── verify_session.py   # SuperTokens session verification dependency
-├── models/
-│   └── user.py             # Pydantic models
-├── main.py                 # app entrypoint
-├── requirements.txt
-└── Dockerfile
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-## Local Setup
+Copy `.env` (it is not committed) and run:
 
-1. **Create a virtual environment and install dependencies**
+```bash
+python3 main.py
+```
 
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
+The API is at `http://localhost:8000`, with docs at `http://localhost:8000/docs`.
 
-2. **Configure environment variables**
-
-   Create a `.env` file in `backend/` (see [Environment Variables](#environment-variables) below).
-
-3. **Run the app**
-
-   ```bash
-   uvicorn main:app --reload
-   ```
-
-   The API will be available at `http://localhost:8000`, with interactive docs at `http://localhost:8000/docs`.
-
-## Environment Variables
+## Environment
 
 | Variable | Description |
 |---|---|
 | `ENV` | `local`, `dev`, or `prod` |
 | `MONGO_URI` | MongoDB connection string |
-| `MONGO_DB_NAME` | Database name to use |
-| `API_DOMAIN` | Base URL of this API (required by SuperTokens) |
-| `WEBSITE_DOMAIN` | Base URL of the frontend (required by SuperTokens, also used for CORS) |
-| `SUPERTOKENS_CONNECTION_URI` | URL of your SuperTokens core |
-| `SUPERTOKENS_API_KEY` | API key for your SuperTokens core |
+| `MONGO_DB_NAME` | Database name |
+| `WEBSITE_DOMAIN` | Frontend origin, used for CORS |
+| `SELFBRIEF_ISSUER` | CMS OIDC issuer |
+| `SELFBRIEF_BASE_URL` | CMS API origin, used for `/api/v1/sso/me/` |
 
-## Running with Docker
-
-```bash
-docker build -t categorisation-system-backend .
-docker run -p 8000:8000 --env-file .env categorisation-system-backend
-```
+AWS, Resend, and the job worker settings are in `config/settings.py`.
 
 ## Deployment
 
-Deployments run automatically via GitHub Actions:
+GitHub Actions builds and deploys on push:
 
-- Push to `main` → builds and pushes the `latest` image to ECR → deploys to the `categorisation-system-backend-prod` ECS service.
-- Push to `dev` → builds and pushes the `dev` image to ECR → deploys to the `categorisation-system-backend-dev` ECS service.
+- `main` deploys the prod ECS service.
+- `dev` deploys the dev ECS service.
 
-See `.github/workflows/` for the pipeline definitions.
+See `.github/workflows/`.
