@@ -72,7 +72,45 @@ class Database:
             IndexModel([("created_by_user_id", ASCENDING)]),
         ])
 
+        await cls._ensure_final_categories(db)
+
         print("Database indexes ensured")
+
+    @classmethod
+    async def _ensure_final_categories(cls, db) -> None:
+        """
+        The final-category list lives in Mongo so it can be edited there.
+        Insert the starting list only when the collection is empty.
+        """
+        if await db["final_categories"].count_documents({}) > 0:
+            return
+        values = [
+            "A",
+            "A+",
+            "A2",
+            "AA",
+            "B",
+            "B+",
+            "B2",
+            "BB",
+            "B/C",
+            "B VFR",
+            "B VFR DAY",
+            "C",
+            "C+",
+            "C2",
+            "CC",
+            "E",
+            "N/A",
+            "P",
+            "U",
+            "X",
+            "X Not Authorised",
+        ]
+        await db["final_categories"].insert_many([
+            {"value": value, "order": index}
+            for index, value in enumerate(values)
+        ])
 
     @classmethod
     async def _drop_legacy_user_identity(cls, users) -> None:

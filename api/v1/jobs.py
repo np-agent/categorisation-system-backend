@@ -63,6 +63,14 @@ async def list_jobs(
     return [serialize_job_summary(d, user_map=user_map, org_map=org_map) for d in docs]
 
 
+@router.get("/final-categories", response_model=list[str])
+async def list_final_categories(caller: dict = Depends(get_current_db_user)):
+    """Values a reviewer can choose as the final category. Stored in Mongo."""
+    db = await get_database()
+    rows = await db["final_categories"].find({}, {"value": 1, "order": 1}).sort("order", 1).to_list(length=200)
+    return [row["value"] for row in rows if row.get("value")]
+
+
 def _job_visible_to(doc: dict, caller: dict) -> bool:
     if caller.get("role") == "super-admin":
         return True
@@ -272,6 +280,11 @@ async def save_job_review(
         raise HTTPException(status_code=400, detail="Notes are too long")
     if len(category) > 200:
         raise HTTPException(status_code=400, detail="Final category is too long")
+    if category:
+        allowed = await db["final_categories"].distinct("value")
+        previous_kept = category == (doc.get("reviewed_category") or "")
+        if category not in allowed and not previous_kept:
+            raise HTTPException(status_code=400, detail="Choose a final category from the list.")
 
     previous_notes = doc.get("reviewed_notes") or ""
     previous_category = doc.get("reviewed_category") or ""
