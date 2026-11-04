@@ -1,0 +1,12 @@
+{analysis_role}
+
+DECISION TASK:
+Choose one category for the whole airfield from the criteria and the evidence you are given.
+
+OUTPUT CONTRACT:
+Call submit_categorisation_result exactly once.
+- reasoning: brief. A few sentences on the criteria that decided the category, with page numbers where you have them. Do not retell the AIP.
+- final_category: {category_rule}
+- confidence_level: HIGH, MEDIUM, or LOW
+
+If the evidence is incomplete, still choose the closest allowed category and set confidence to LOW.

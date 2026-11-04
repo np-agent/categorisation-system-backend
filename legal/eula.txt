@@ -1,0 +1,38 @@
+SELFBRIEF END USER LICENCE AGREEMENT
+
+This End User Licence Agreement ("Agreement") governs your use of SelfBrief and the categorisation system (together, the "Service"). By creating an account, ticking the acceptance box, or otherwise indicating acceptance, you agree to be bound by this Agreement.
+
+If you do not agree, you must not use the Service.
+
+1. Licence
+SelfBrief grants you a limited, non-exclusive, non-transferable, revocable licence to access and use the Service for your organisation's internal operational purposes, in accordance with this Agreement and any applicable organisation terms.
+
+2. Accounts and access
+You must keep your login details confidential and are responsible for activity under your account. Access may be withdrawn if your account or organisation is deactivated, or if you do not accept an updated version of this Agreement.
+
+3. Nature of the Service
+The Service uses automated analysis to produce categorisation output from aeronautical information. All output is advisory, uncertified, and provided for assistance only. It is not a substitute for official aeronautical information, charts, AIP data, or professional operational judgement.
+
+You remain fully responsible for independently checking any output against official sources before you update operational or company-specific data in SelfBrief or any external flight system.
+
+4. Acceptable use
+You must not misuse the Service, attempt to circumvent access controls, share your credentials, or use the Service in a way that would put flight operations, other users, or SelfBrief at risk.
+
+5. Intellectual property
+SelfBrief and its licensors retain all rights in the Service, including software, branding, and documentation. This Agreement does not transfer ownership of any intellectual property.
+
+6. Updates to this Agreement
+SelfBrief may update this Agreement from time to time. When the text of this Agreement changes, you will be asked to review and accept the updated version before you can continue to use the Service. Continued use after acceptance constitutes agreement to the updated terms.
+
+7. Disclaimer
+The Service is provided "as is" and "as available". To the fullest extent permitted by law, SelfBrief disclaims all warranties, whether express or implied, including fitness for a particular purpose, accuracy, completeness, and non-infringement. SelfBrief does not warrant that output is correct, current, or suitable for operational use without independent verification.
+
+8. Liability
+To the fullest extent permitted by law, SelfBrief is not liable for any loss arising from reliance on categorisation output, from failure to cross-check official charts or AIP data, or from use of the Service in operational decision-making. Nothing in this Agreement limits liability that cannot be limited under applicable law.
+
+9. Governing law
+This Agreement is governed by the laws of England and Wales. The courts of England and Wales have exclusive jurisdiction over any dispute arising out of it.
+
+10. Contact
+Questions about this Agreement can be directed to your SelfBrief administrator.
+
