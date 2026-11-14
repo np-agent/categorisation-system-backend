@@ -22,6 +22,7 @@ from config.settings import settings  # noqa: E402
 from database.session import close_db, connect_db  # noqa: E402
 from middleware.rate_limit import RateLimitMiddleware  # noqa: E402
 from services.job_poller import job_poller_loop  # noqa: E402
+from services.operator_sync import operator_sync_loop  # noqa: E402
 from slowapi import _rate_limit_exceeded_handler  # noqa: E402
 from slowapi.errors import RateLimitExceeded  # noqa: E402
 from slowapi.middleware import SlowAPIMiddleware  # noqa: E402
@@ -35,11 +36,12 @@ async def lifespan(app: FastAPI):
     await connect_db()
     stop_event = asyncio.Event()
     poller_task = asyncio.create_task(job_poller_loop(stop_event))
+    sync_task = asyncio.create_task(operator_sync_loop(stop_event))
     try:
         yield
     finally:
         stop_event.set()
-        await poller_task
+        await asyncio.gather(poller_task, sync_task, return_exceptions=True)
         await close_db()
 
 
