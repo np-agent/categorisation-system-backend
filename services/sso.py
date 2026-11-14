@@ -19,7 +19,7 @@ only when none are. That person is then marked inactive in our database so
 the user list matches. A suspension is a 401 on a token we have already
 seen, and marks that same person inactive. A later successful sign-in
 marks them active again. This profile does not change the organisation
-row. A CMS scheduled task keeps that status.
+row. services.operator_sync keeps that status from the operators list.
 """
 
 from __future__ import annotations

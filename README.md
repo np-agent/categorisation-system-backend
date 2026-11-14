@@ -29,7 +29,9 @@ The API is at `http://localhost:8000`, with docs at `http://localhost:8000/docs`
 | `MONGO_DB_NAME` | Database name |
 | `WEBSITE_DOMAIN` | Frontend origin, used for CORS |
 | `SELFBRIEF_ISSUER` | CMS OIDC issuer |
-| `SELFBRIEF_BASE_URL` | CMS API origin, used for `/api/v1/sso/me/` |
+| `SELFBRIEF_BASE_URL` | CMS API origin, used for `/api/v1/sso/me/` and `/api/v1/sso/operators/` |
+| `SELFBRIEF_CLIENT_ID` | Same application id the frontend uses for sign-in. Used by the operator sync. |
+| `SELFBRIEF_CLIENT_SECRET` | Same application secret. Server side only. |
 
 AWS, Resend, and the job worker settings are in `config/settings.py`.
 

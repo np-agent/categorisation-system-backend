@@ -53,9 +53,20 @@ A suspension that never reaches this API (CMS blocks the browser before the call
 
 The organisation list in the product is live when `organizations.is_active` is true, and Archive when it is false. That flag is ours.
 
-Logging in does not write it. CMS has said a scheduled task will keep organisation status, separate from the user profile. That task is not wired here yet, because there is no endpoint or payload for it. Until it exists, switching categorisation off in CMS ends that person's session and marks them inactive, but the organisation stays on the live list.
+Logging in does not write it. A background sync does, from `GET /api/v1/sso/operators/`.
 
-A super-admin can still archive an organisation from this app (`PATCH /organisations/{id}/deactivate`). That sets the organisation inactive, marks its members inactive with `deactivated_by_org`, and restores only those members when the organisation is reactivated. The internal SelfBrief Aero organisation cannot be archived. This is separate from the CMS operator switch.
+Every `OPERATOR_SYNC_INTERVAL_SECONDS` (15 minutes), and once when the process starts, the API requests a fresh client-credentials token with scope `operators:read` and fetches the operators that currently have categorisation access. The token is not stored. If the token or the list call fails, nothing is changed.
+
+Operators are matched on `cms_organisation_id`. The internal SelfBrief Aero organisation, and any organisation without a CMS id, are left alone.
+
+- Present, and new to us: create an active organisation with that name, no templates, and no users.
+- Present, and we had archived it: restore it the same way as Reactivate. Only people tagged `deactivated_by_org` are turned back on.
+- Present, with a new registered name: update the display name. The slug stays.
+- Missing from a successful list: archive it the same way as Deactivate. People who were still active are switched off and tagged. Jobs, templates, and instructions stay.
+
+A person whose own access was removed is not updated by this list, because the list has no users. Their next sign-in still refuses them.
+
+A super-admin can still archive an organisation from this app (`PATCH /organisations/{id}/deactivate`). That uses the same member rules. The internal SelfBrief Aero organisation cannot be archived. The next sync will turn a CMS operator back on if SelfBrief still lists it.
 
 Archiving an organisation sticks. The profile load does not write `organizations.is_active`, and a later request still gets 403 if that organisation is inactive.
 

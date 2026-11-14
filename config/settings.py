@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     # SelfBrief CMS SSO
     SELFBRIEF_ISSUER: str = "https://dev-cms.selfbrief.aero/o"
     SELFBRIEF_BASE_URL: str = "https://dev-cms.selfbrief.aero"
+    # Same application credentials the frontend uses for sign-in.
+    # The operator sync uses them with the client-credentials grant.
+    SELFBRIEF_CLIENT_ID: str | None = None
+    SELFBRIEF_CLIENT_SECRET: str | None = None
+    # How often to refresh which operators still have categorisation access.
+    OPERATOR_SYNC_INTERVAL_SECONDS: int = 900
 
     # AWS S3
     AWS_ACCESS_KEY_ID: str | None = None
