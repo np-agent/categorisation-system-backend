@@ -1,0 +1,6 @@
+Categorisation criteria:
+---
+{template_content}
+---
+
+Read only the attached pages and call submit_section_notes.

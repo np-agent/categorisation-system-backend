@@ -1,0 +1,10 @@
+{analysis_role}
+
+SECTION TASK:
+You are reading pages {page_start}-{page_end} of a larger AIP. Report only what these pages support.
+
+OUTPUT CONTRACT:
+Call submit_section_notes exactly once.
+- notes: one short line per criterion you can judge from these pages. Each line is the criterion, TRUE or FALSE, the evidence, and the page number. Skip criteria these pages do not cover. Do not choose a category.
+
+Do not write a long essay.
